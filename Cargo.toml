@@ -1,0 +1,12 @@
+[package]
+name = "lmc"
+version = "0.1.0"
+edition = "2024"
+description = "A passive, zero-friction CLI tool for capturing, clustering, and retrieving shell command workflows"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+rusqlite = { version = "0.34", features = ["bundled"] }
+toml = "0.8"
+serde = { version = "1", features = ["derive"] }
+directories = "6"
