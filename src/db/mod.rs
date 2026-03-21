@@ -46,6 +46,7 @@ impl Database {
     }
 
     fn initialize(&self) -> Result<()> {
+        self.conn.execute_batch("PRAGMA journal_mode=WAL;")?;
         self.conn.execute_batch(
             "
             CREATE TABLE IF NOT EXISTS commands (
@@ -406,5 +407,17 @@ mod tests {
         let db = Database::open(&db_path).unwrap();
         db.insert_command(&sample_command("test", 1000)).unwrap();
         assert!(db_path.exists());
+    }
+
+    #[test]
+    fn test_wal_mode_enabled() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test-wal.db");
+        let db = Database::open(&db_path).unwrap();
+        let mode: String = db
+            .conn
+            .query_row("PRAGMA journal_mode", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(mode, "wal");
     }
 }
