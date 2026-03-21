@@ -9,6 +9,15 @@ use clap::Parser;
 use cli::{Cli, Command};
 
 fn main() {
+    let cfg = match config::load_config() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("Error loading config: {e}");
+            std::process::exit(1);
+        }
+    };
+
+    let db_path = config::resolve_db_path(&cfg);
     let cli = Cli::parse();
 
     match cli.command {
@@ -32,4 +41,7 @@ fn main() {
             }
         }
     }
+
+    // Suppress unused variable warning until db_path is used by the storage layer
+    let _ = db_path;
 }
