@@ -25,7 +25,13 @@ fn main() {
             println!("TODO: save cluster as '{alias}' (from: {from:?})");
         }
         Some(Command::Init { shell }) => {
-            println!("TODO: generate hook for {shell}");
+            match shell.as_str() {
+                "zsh" => print!("{}", shell::init_zsh()),
+                _ => {
+                    eprintln!("Unsupported shell: {shell}. Supported: zsh");
+                    std::process::exit(1);
+                }
+            }
         }
         Some(Command::Record { cmd, dir, exit_code, session_id, shell }) => {
             println!("TODO: record command '{cmd}' in {dir} (exit: {exit_code:?}, session: {session_id}, shell: {shell})");
