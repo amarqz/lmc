@@ -77,19 +77,6 @@ pub fn mark_noisy(commands: &[CommandRecord], config: &NoiseFilterConfig) -> Vec
         }
     }
 
-    // Rule 4 (neighbor spreading): a failed ignored command spreads "kept" to its
-    // immediate neighbors, since failure context makes adjacent commands relevant
-    for i in 0..n {
-        if is_failed[i] && is_ignored[i] {
-            if i > 0 {
-                kept[i - 1] = true;
-            }
-            if i + 1 < n {
-                kept[i + 1] = true;
-            }
-        }
-    }
-
     // noisy = not kept
     kept.iter().map(|&k| !k).collect()
 }
@@ -307,8 +294,9 @@ mod tests {
             make_cmd("pwd", Some(0)),
         ];
         let result = mark_noisy(&commands, &default_config());
-        // cd failed → kept (not noisy). ls has meaningful after (cd), pwd has meaningful before (cd).
-        // So all three are kept!
-        assert_eq!(result, vec![false, false, false]);
+        // cd failed → kept. But strict sandwich requires meaningful on BOTH sides:
+        // ls has meaningful after but not before → noisy
+        // pwd has meaningful before but not after → noisy
+        assert_eq!(result, vec![true, false, true]);
     }
 }
