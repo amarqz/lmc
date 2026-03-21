@@ -40,6 +40,8 @@ fn main() {
                 .unwrap_or_default()
                 .as_secs() as i64;
 
+            let noisy = filter::is_noisy(&cmd, &cfg.noise_filter);
+
             let record = db::CommandRecord {
                 id: None,
                 cmd,
@@ -48,7 +50,7 @@ fn main() {
                 exit_code,
                 session_id,
                 shell,
-                noisy: false,
+                noisy,
             };
 
             // Silent operation: never interfere with the user's shell

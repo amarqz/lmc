@@ -1,5 +1,5 @@
 use crate::config::NoiseFilterConfig;
-use crate::db::CommandRecord;
+use crate::db::{CommandRecord, Database};
 
 /// Check if a command is noisy based on its first token against the ignore list.
 /// This is a context-free check — no surrounding commands considered.
@@ -92,6 +92,25 @@ pub fn mark_noisy(commands: &[CommandRecord], config: &NoiseFilterConfig) -> Vec
 
     // noisy = not kept
     kept.iter().map(|&k| !k).collect()
+}
+
+/// Re-evaluate noisy flags for all commands in a session using full context.
+pub fn remark_session(
+    db: &Database,
+    session_id: &str,
+    config: &NoiseFilterConfig,
+) -> rusqlite::Result<()> {
+    let commands = db.get_session_commands(session_id)?;
+    let noisy_flags = mark_noisy(&commands, config);
+
+    for (cmd, &noisy) in commands.iter().zip(noisy_flags.iter()) {
+        if let Some(id) = cmd.id {
+            if cmd.noisy != noisy {
+                db.update_noisy_flag(id, noisy)?;
+            }
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -240,6 +259,44 @@ mod tests {
         let commands: Vec<CommandRecord> = vec![];
         let result = mark_noisy(&commands, &default_config());
         assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_remark_session() {
+        use crate::db::Database;
+
+        let db = Database::open_in_memory().unwrap();
+        let config = default_config();
+
+        // Insert a session: meaningful, noisy, meaningful
+        let mut cmd1 = make_cmd("cargo build", Some(0));
+        cmd1.session_id = "remark-test".to_string();
+        let mut cmd2 = make_cmd("ls", Some(0));
+        cmd2.session_id = "remark-test".to_string();
+        let mut cmd3 = make_cmd("cargo test", Some(0));
+        cmd3.session_id = "remark-test".to_string();
+
+        db.insert_command(&cmd1).unwrap();
+        db.insert_command(&cmd2).unwrap();
+        db.insert_command(&cmd3).unwrap();
+
+        // Before remark, ls is not marked noisy (default false)
+        let cmds = db.get_session_commands("remark-test").unwrap();
+        assert!(!cmds[1].noisy);
+
+        // Remark — ls is sandwiched, should stay not noisy
+        remark_session(&db, "remark-test", &config).unwrap();
+        let cmds = db.get_session_commands("remark-test").unwrap();
+        assert!(!cmds[1].noisy);
+
+        // Now test with isolated noisy: just one ls
+        let mut lonely = make_cmd("ls", Some(0));
+        lonely.session_id = "lonely-session".to_string();
+        db.insert_command(&lonely).unwrap();
+
+        remark_session(&db, "lonely-session", &config).unwrap();
+        let cmds = db.get_session_commands("lonely-session").unwrap();
+        assert!(cmds[0].noisy);
     }
 
     #[test]
