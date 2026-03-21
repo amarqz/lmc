@@ -104,10 +104,10 @@ pub fn remark_session(
     let noisy_flags = mark_noisy(&commands, config);
 
     for (cmd, &noisy) in commands.iter().zip(noisy_flags.iter()) {
-        if let Some(id) = cmd.id {
-            if cmd.noisy != noisy {
-                db.update_noisy_flag(id, noisy)?;
-            }
+        if let Some(id) = cmd.id
+            && cmd.noisy != noisy
+        {
+            db.update_noisy_flag(id, noisy)?;
         }
     }
     Ok(())
