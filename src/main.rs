@@ -47,6 +47,7 @@ fn main() {
                 exit_code,
                 session_id,
                 shell,
+                noisy: false,
             };
 
             // Silent operation: never interfere with the user's shell
