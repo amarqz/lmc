@@ -1,4 +1,4 @@
-.PHONY: all build test clean run check fmt lint install
+.PHONY: all build test clean run check fmt lint install debug
 
 all: build
 
@@ -25,6 +25,10 @@ run:
 
 install:
 	cargo install --path .
+
+debug:
+	@mkdir -p aux
+	LMC_DB_PATH=aux/debug.db cargo run -- $(ARGS)
 
 clean:
 	cargo clean

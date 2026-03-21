@@ -1,1 +1,410 @@
-// Database / storage layer (SQLite)
+use rusqlite::{params, Connection, Result};
+use std::fs;
+use std::path::Path;
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CommandRecord {
+    pub id: Option<i64>,
+    pub cmd: String,
+    pub timestamp: i64,
+    pub directory: String,
+    pub exit_code: Option<i32>,
+    pub session_id: String,
+    pub shell: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Cluster {
+    pub id: Option<i64>,
+    pub alias: Option<String>,
+    pub created_at: i64,
+    pub last_used: Option<i64>,
+    pub directory: Option<String>,
+    pub notes: Option<String>,
+}
+
+pub struct Database {
+    conn: Connection,
+}
+
+impl Database {
+    pub fn open(path: &Path) -> Result<Self> {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).ok();
+        }
+        let conn = Connection::open(path)?;
+        let db = Database { conn };
+        db.initialize()?;
+        Ok(db)
+    }
+
+    pub fn open_in_memory() -> Result<Self> {
+        let conn = Connection::open_in_memory()?;
+        let db = Database { conn };
+        db.initialize()?;
+        Ok(db)
+    }
+
+    fn initialize(&self) -> Result<()> {
+        self.conn.execute_batch(
+            "
+            CREATE TABLE IF NOT EXISTS commands (
+                id          INTEGER PRIMARY KEY,
+                cmd         TEXT NOT NULL,
+                timestamp   INTEGER NOT NULL,
+                directory   TEXT NOT NULL,
+                exit_code   INTEGER,
+                session_id  TEXT NOT NULL,
+                shell       TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS clusters (
+                id          INTEGER PRIMARY KEY,
+                alias       TEXT UNIQUE,
+                created_at  INTEGER NOT NULL,
+                last_used   INTEGER,
+                directory   TEXT,
+                notes       TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS cluster_commands (
+                cluster_id  INTEGER REFERENCES clusters(id),
+                command_id  INTEGER REFERENCES commands(id),
+                position    INTEGER NOT NULL,
+                PRIMARY KEY (cluster_id, command_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS cluster_tags (
+                cluster_id  INTEGER REFERENCES clusters(id),
+                tag         TEXT NOT NULL,
+                PRIMARY KEY (cluster_id, tag)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_commands_timestamp ON commands(timestamp);
+            CREATE INDEX IF NOT EXISTS idx_commands_directory ON commands(directory);
+            CREATE INDEX IF NOT EXISTS idx_commands_session_id ON commands(session_id);
+            CREATE INDEX IF NOT EXISTS idx_clusters_alias ON clusters(alias);
+            ",
+        )
+    }
+
+    pub fn insert_command(&self, cmd: &CommandRecord) -> Result<i64> {
+        self.conn.execute(
+            "INSERT INTO commands (cmd, timestamp, directory, exit_code, session_id, shell)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                cmd.cmd,
+                cmd.timestamp,
+                cmd.directory,
+                cmd.exit_code,
+                cmd.session_id,
+                cmd.shell,
+            ],
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    pub fn get_recent_commands(&self, limit: i64) -> Result<Vec<CommandRecord>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, cmd, timestamp, directory, exit_code, session_id, shell
+             FROM commands ORDER BY timestamp DESC LIMIT ?1",
+        )?;
+        let rows = stmt.query_map(params![limit], |row| {
+            Ok(CommandRecord {
+                id: Some(row.get(0)?),
+                cmd: row.get(1)?,
+                timestamp: row.get(2)?,
+                directory: row.get(3)?,
+                exit_code: row.get(4)?,
+                session_id: row.get(5)?,
+                shell: row.get(6)?,
+            })
+        })?;
+        rows.collect()
+    }
+
+    pub fn insert_cluster(&self, cluster: &Cluster) -> Result<i64> {
+        self.conn.execute(
+            "INSERT INTO clusters (alias, created_at, last_used, directory, notes)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                cluster.alias,
+                cluster.created_at,
+                cluster.last_used,
+                cluster.directory,
+                cluster.notes,
+            ],
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    pub fn get_cluster_by_alias(&self, alias: &str) -> Result<Option<Cluster>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, alias, created_at, last_used, directory, notes
+             FROM clusters WHERE alias = ?1",
+        )?;
+        let mut rows = stmt.query_map(params![alias], |row| {
+            Ok(Cluster {
+                id: Some(row.get(0)?),
+                alias: row.get(1)?,
+                created_at: row.get(2)?,
+                last_used: row.get(3)?,
+                directory: row.get(4)?,
+                notes: row.get(5)?,
+            })
+        })?;
+        match rows.next() {
+            Some(row) => Ok(Some(row?)),
+            None => Ok(None),
+        }
+    }
+
+    pub fn get_all_clusters(&self) -> Result<Vec<Cluster>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, alias, created_at, last_used, directory, notes
+             FROM clusters ORDER BY last_used DESC NULLS LAST, created_at DESC",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok(Cluster {
+                id: Some(row.get(0)?),
+                alias: row.get(1)?,
+                created_at: row.get(2)?,
+                last_used: row.get(3)?,
+                directory: row.get(4)?,
+                notes: row.get(5)?,
+            })
+        })?;
+        rows.collect()
+    }
+
+    pub fn add_command_to_cluster(
+        &self,
+        cluster_id: i64,
+        command_id: i64,
+        position: i32,
+    ) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO cluster_commands (cluster_id, command_id, position)
+             VALUES (?1, ?2, ?3)",
+            params![cluster_id, command_id, position],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_commands_for_cluster(&self, cluster_id: i64) -> Result<Vec<CommandRecord>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT c.id, c.cmd, c.timestamp, c.directory, c.exit_code, c.session_id, c.shell
+             FROM commands c
+             JOIN cluster_commands cc ON c.id = cc.command_id
+             WHERE cc.cluster_id = ?1
+             ORDER BY cc.position ASC",
+        )?;
+        let rows = stmt.query_map(params![cluster_id], |row| {
+            Ok(CommandRecord {
+                id: Some(row.get(0)?),
+                cmd: row.get(1)?,
+                timestamp: row.get(2)?,
+                directory: row.get(3)?,
+                exit_code: row.get(4)?,
+                session_id: row.get(5)?,
+                shell: row.get(6)?,
+            })
+        })?;
+        rows.collect()
+    }
+
+    pub fn add_tag_to_cluster(&self, cluster_id: i64, tag: &str) -> Result<()> {
+        self.conn.execute(
+            "INSERT OR IGNORE INTO cluster_tags (cluster_id, tag) VALUES (?1, ?2)",
+            params![cluster_id, tag],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_tags_for_cluster(&self, cluster_id: i64) -> Result<Vec<String>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT tag FROM cluster_tags WHERE cluster_id = ?1 ORDER BY tag",
+        )?;
+        let rows = stmt.query_map(params![cluster_id], |row| row.get(0))?;
+        rows.collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_command(cmd: &str, timestamp: i64) -> CommandRecord {
+        CommandRecord {
+            id: None,
+            cmd: cmd.to_string(),
+            timestamp,
+            directory: "/home/user/project".to_string(),
+            exit_code: Some(0),
+            session_id: "session-1".to_string(),
+            shell: "zsh".to_string(),
+        }
+    }
+
+    #[test]
+    fn test_insert_and_retrieve_command() {
+        let db = Database::open_in_memory().unwrap();
+        let cmd = sample_command("kubectl get pods", 1700000000);
+        let id = db.insert_command(&cmd).unwrap();
+        assert!(id > 0);
+
+        let recent = db.get_recent_commands(10).unwrap();
+        assert_eq!(recent.len(), 1);
+        assert_eq!(recent[0].cmd, "kubectl get pods");
+        assert_eq!(recent[0].timestamp, 1700000000);
+        assert_eq!(recent[0].id, Some(id));
+    }
+
+    #[test]
+    fn test_recent_commands_ordering() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_command(&sample_command("first", 1000)).unwrap();
+        db.insert_command(&sample_command("second", 2000)).unwrap();
+        db.insert_command(&sample_command("third", 3000)).unwrap();
+
+        let recent = db.get_recent_commands(2).unwrap();
+        assert_eq!(recent.len(), 2);
+        assert_eq!(recent[0].cmd, "third");
+        assert_eq!(recent[1].cmd, "second");
+    }
+
+    #[test]
+    fn test_insert_and_retrieve_cluster() {
+        let db = Database::open_in_memory().unwrap();
+        let cluster = Cluster {
+            id: None,
+            alias: Some("helm-debug".to_string()),
+            created_at: 1700000000,
+            last_used: Some(1700001000),
+            directory: Some("/home/user/infra".to_string()),
+            notes: None,
+        };
+        let cluster_id = db.insert_cluster(&cluster).unwrap();
+        assert!(cluster_id > 0);
+
+        let retrieved = db.get_cluster_by_alias("helm-debug").unwrap().unwrap();
+        assert_eq!(retrieved.alias, Some("helm-debug".to_string()));
+        assert_eq!(retrieved.created_at, 1700000000);
+        assert_eq!(retrieved.last_used, Some(1700001000));
+    }
+
+    #[test]
+    fn test_get_cluster_by_alias_not_found() {
+        let db = Database::open_in_memory().unwrap();
+        let result = db.get_cluster_by_alias("nonexistent").unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_get_all_clusters_ordered_by_last_used() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_cluster(&Cluster {
+            id: None,
+            alias: Some("old".to_string()),
+            created_at: 1000,
+            last_used: Some(1000),
+            directory: None,
+            notes: None,
+        })
+        .unwrap();
+        db.insert_cluster(&Cluster {
+            id: None,
+            alias: Some("recent".to_string()),
+            created_at: 2000,
+            last_used: Some(3000),
+            directory: None,
+            notes: None,
+        })
+        .unwrap();
+
+        let all = db.get_all_clusters().unwrap();
+        assert_eq!(all.len(), 2);
+        assert_eq!(all[0].alias, Some("recent".to_string()));
+        assert_eq!(all[1].alias, Some("old".to_string()));
+    }
+
+    #[test]
+    fn test_cluster_commands_relationship() {
+        let db = Database::open_in_memory().unwrap();
+
+        let cmd1_id = db.insert_command(&sample_command("helm list", 1000)).unwrap();
+        let cmd2_id = db.insert_command(&sample_command("kubectl get pods", 1001)).unwrap();
+        let cmd3_id = db.insert_command(&sample_command("kubectl logs pod-xyz", 1002)).unwrap();
+
+        let cluster_id = db
+            .insert_cluster(&Cluster {
+                id: None,
+                alias: Some("debug-flow".to_string()),
+                created_at: 1000,
+                last_used: None,
+                directory: Some("/home/user/infra".to_string()),
+                notes: None,
+            })
+            .unwrap();
+
+        db.add_command_to_cluster(cluster_id, cmd1_id, 0).unwrap();
+        db.add_command_to_cluster(cluster_id, cmd2_id, 1).unwrap();
+        db.add_command_to_cluster(cluster_id, cmd3_id, 2).unwrap();
+
+        let cmds = db.get_commands_for_cluster(cluster_id).unwrap();
+        assert_eq!(cmds.len(), 3);
+        assert_eq!(cmds[0].cmd, "helm list");
+        assert_eq!(cmds[1].cmd, "kubectl get pods");
+        assert_eq!(cmds[2].cmd, "kubectl logs pod-xyz");
+    }
+
+    #[test]
+    fn test_cluster_tags() {
+        let db = Database::open_in_memory().unwrap();
+        let cluster_id = db
+            .insert_cluster(&Cluster {
+                id: None,
+                alias: Some("k8s-debug".to_string()),
+                created_at: 1000,
+                last_used: None,
+                directory: None,
+                notes: None,
+            })
+            .unwrap();
+
+        db.add_tag_to_cluster(cluster_id, "kubernetes").unwrap();
+        db.add_tag_to_cluster(cluster_id, "helm").unwrap();
+        // Duplicate should be ignored
+        db.add_tag_to_cluster(cluster_id, "kubernetes").unwrap();
+
+        let tags = db.get_tags_for_cluster(cluster_id).unwrap();
+        assert_eq!(tags, vec!["helm", "kubernetes"]);
+    }
+
+    #[test]
+    fn test_command_with_null_exit_code() {
+        let db = Database::open_in_memory().unwrap();
+        let cmd = CommandRecord {
+            id: None,
+            cmd: "some command".to_string(),
+            timestamp: 1000,
+            directory: "/tmp".to_string(),
+            exit_code: None,
+            session_id: "s1".to_string(),
+            shell: "bash".to_string(),
+        };
+        let id = db.insert_command(&cmd).unwrap();
+        let recent = db.get_recent_commands(1).unwrap();
+        assert_eq!(recent[0].id, Some(id));
+        assert_eq!(recent[0].exit_code, None);
+    }
+
+    #[test]
+    fn test_open_creates_file_and_parents() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("nested").join("dir").join("lmc.db");
+        let db = Database::open(&db_path).unwrap();
+        db.insert_command(&sample_command("test", 1000)).unwrap();
+        assert!(db_path.exists());
+    }
+}
