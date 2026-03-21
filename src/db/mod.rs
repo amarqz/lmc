@@ -226,6 +226,35 @@ impl Database {
         rows.collect()
     }
 
+    pub fn get_session_commands(&self, session_id: &str) -> Result<Vec<CommandRecord>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, cmd, timestamp, directory, exit_code, session_id, shell, noisy
+             FROM commands WHERE session_id = ?1 ORDER BY timestamp ASC",
+        )?;
+        let rows = stmt.query_map(params![session_id], |row| {
+            let noisy_int: i32 = row.get(7)?;
+            Ok(CommandRecord {
+                id: Some(row.get(0)?),
+                cmd: row.get(1)?,
+                timestamp: row.get(2)?,
+                directory: row.get(3)?,
+                exit_code: row.get(4)?,
+                session_id: row.get(5)?,
+                shell: row.get(6)?,
+                noisy: noisy_int != 0,
+            })
+        })?;
+        rows.collect()
+    }
+
+    pub fn update_noisy_flag(&self, command_id: i64, noisy: bool) -> Result<()> {
+        self.conn.execute(
+            "UPDATE commands SET noisy = ?1 WHERE id = ?2",
+            params![noisy as i32, command_id],
+        )?;
+        Ok(())
+    }
+
     pub fn add_tag_to_cluster(&self, cluster_id: i64, tag: &str) -> Result<()> {
         self.conn.execute(
             "INSERT OR IGNORE INTO cluster_tags (cluster_id, tag) VALUES (?1, ?2)",
@@ -453,6 +482,47 @@ mod tests {
         let cmd = sample_command("cargo build", 1000);
         db.insert_command(&cmd).unwrap();
 
+        let recent = db.get_recent_commands(1).unwrap();
+        assert!(!recent[0].noisy);
+    }
+
+    #[test]
+    fn test_get_session_commands() {
+        let db = Database::open_in_memory().unwrap();
+        let mut cmd1 = sample_command("cargo build", 1000);
+        cmd1.session_id = "sess-A".to_string();
+        let mut cmd2 = sample_command("ls", 1001);
+        cmd2.session_id = "sess-A".to_string();
+        let mut cmd3 = sample_command("cargo test", 1002);
+        cmd3.session_id = "sess-B".to_string();
+
+        db.insert_command(&cmd1).unwrap();
+        db.insert_command(&cmd2).unwrap();
+        db.insert_command(&cmd3).unwrap();
+
+        let session_cmds = db.get_session_commands("sess-A").unwrap();
+        assert_eq!(session_cmds.len(), 2);
+        assert_eq!(session_cmds[0].cmd, "cargo build");
+        assert_eq!(session_cmds[1].cmd, "ls");
+    }
+
+    #[test]
+    fn test_update_noisy_flag() {
+        let db = Database::open_in_memory().unwrap();
+        let cmd = sample_command("ls", 1000);
+        let id = db.insert_command(&cmd).unwrap();
+
+        // Initially not noisy
+        let recent = db.get_recent_commands(1).unwrap();
+        assert!(!recent[0].noisy);
+
+        // Mark as noisy
+        db.update_noisy_flag(id, true).unwrap();
+        let recent = db.get_recent_commands(1).unwrap();
+        assert!(recent[0].noisy);
+
+        // Mark back as not noisy
+        db.update_noisy_flag(id, false).unwrap();
         let recent = db.get_recent_commands(1).unwrap();
         assert!(!recent[0].noisy);
     }
