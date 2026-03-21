@@ -2,6 +2,7 @@ mod cli;
 mod cluster;
 mod config;
 mod db;
+mod filter;
 mod shell;
 mod ui;
 
