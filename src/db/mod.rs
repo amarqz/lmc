@@ -420,4 +420,30 @@ mod tests {
             .unwrap();
         assert_eq!(mode, "wal");
     }
+
+    #[test]
+    fn test_record_roundtrip_file_db() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("roundtrip.db");
+
+        let db = Database::open(&db_path).unwrap();
+        let cmd = CommandRecord {
+            id: None,
+            cmd: "helm list -n production".to_string(),
+            timestamp: 1700000000,
+            directory: "/home/user/infra".to_string(),
+            exit_code: Some(0),
+            session_id: "1234_1700000000".to_string(),
+            shell: "zsh".to_string(),
+        };
+
+        let id = db.insert_command(&cmd).unwrap();
+        assert!(id > 0);
+
+        let recent = db.get_recent_commands(1).unwrap();
+        assert_eq!(recent.len(), 1);
+        assert_eq!(recent[0].cmd, "helm list -n production");
+        assert_eq!(recent[0].session_id, "1234_1700000000");
+        assert_eq!(recent[0].shell, "zsh");
+    }
 }
