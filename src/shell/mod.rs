@@ -1,3 +1,7 @@
+// Shell hook generators for lmc.
+// Supported: zsh, bash, fish.
+// Nushell: deferred to backlog (see lmc-roadmap.md).
+
 /// Generate the zsh shell hook script.
 pub fn init_zsh() -> String {
     r#"# lmc shell integration — zsh
