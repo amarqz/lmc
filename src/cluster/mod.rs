@@ -144,6 +144,33 @@ mod tests {
     }
 
     #[test]
+    fn test_all_clusters_saved_creates_new() {
+        let db = Database::open_in_memory().unwrap();
+
+        // Manually create a saved cluster (alias set) with a command from s1
+        let saved_id = db.insert_cluster(&Cluster {
+            id: None,
+            alias: Some("my-workflow".to_string()),
+            created_at: 1000,
+            last_used: None,
+            directory: Some("/project".to_string()),
+            notes: None,
+        }).unwrap();
+        let (cmd1_id, _) = insert_cmd(&db, "cargo build", 1000, "/project", "s1", false);
+        db.add_command_to_cluster(saved_id, cmd1_id, 0).unwrap();
+
+        // No open cluster for s1 — get_latest_open_cluster should return None
+        // A new command should create a new cluster
+        let (cmd2_id, record2) = insert_cmd(&db, "cargo test", 1060, "/project", "s1", false);
+        let new_cluster = assign_to_cluster(&db, &record2, cmd2_id, 15).unwrap().unwrap();
+
+        assert_ne!(saved_id, new_cluster);
+        let cmds = db.get_commands_for_cluster(new_cluster).unwrap();
+        assert_eq!(cmds.len(), 1);
+        assert_eq!(cmds[0].cmd, "cargo test");
+    }
+
+    #[test]
     fn test_multiple_boundaries_correct_cluster_count() {
         let db = Database::open_in_memory().unwrap();
 
