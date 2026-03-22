@@ -11,6 +11,7 @@ pub struct CommandRecord {
     pub exit_code: Option<i32>,
     pub session_id: String,
     pub shell: String,
+    pub noisy: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -46,6 +47,7 @@ impl Database {
     }
 
     fn initialize(&self) -> Result<()> {
+        self.conn.execute_batch("PRAGMA journal_mode=WAL;")?;
         self.conn.execute_batch(
             "
             CREATE TABLE IF NOT EXISTS commands (
@@ -55,7 +57,8 @@ impl Database {
                 directory   TEXT NOT NULL,
                 exit_code   INTEGER,
                 session_id  TEXT NOT NULL,
-                shell       TEXT NOT NULL
+                shell       TEXT NOT NULL,
+                noisy       INTEGER NOT NULL DEFAULT 0
             );
 
             CREATE TABLE IF NOT EXISTS clusters (
@@ -85,13 +88,18 @@ impl Database {
             CREATE INDEX IF NOT EXISTS idx_commands_session_id ON commands(session_id);
             CREATE INDEX IF NOT EXISTS idx_clusters_alias ON clusters(alias);
             ",
-        )
+        )?;
+        // Migration: add noisy column to existing databases
+        let _ = self.conn.execute_batch(
+            "ALTER TABLE commands ADD COLUMN noisy INTEGER NOT NULL DEFAULT 0;"
+        );
+        Ok(())
     }
 
     pub fn insert_command(&self, cmd: &CommandRecord) -> Result<i64> {
         self.conn.execute(
-            "INSERT INTO commands (cmd, timestamp, directory, exit_code, session_id, shell)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            "INSERT INTO commands (cmd, timestamp, directory, exit_code, session_id, shell, noisy)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             params![
                 cmd.cmd,
                 cmd.timestamp,
@@ -99,6 +107,7 @@ impl Database {
                 cmd.exit_code,
                 cmd.session_id,
                 cmd.shell,
+                cmd.noisy as i32,
             ],
         )?;
         Ok(self.conn.last_insert_rowid())
@@ -106,10 +115,11 @@ impl Database {
 
     pub fn get_recent_commands(&self, limit: i64) -> Result<Vec<CommandRecord>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, cmd, timestamp, directory, exit_code, session_id, shell
+            "SELECT id, cmd, timestamp, directory, exit_code, session_id, shell, noisy
              FROM commands ORDER BY timestamp DESC LIMIT ?1",
         )?;
         let rows = stmt.query_map(params![limit], |row| {
+            let noisy_int: i32 = row.get(7)?;
             Ok(CommandRecord {
                 id: Some(row.get(0)?),
                 cmd: row.get(1)?,
@@ -118,6 +128,7 @@ impl Database {
                 exit_code: row.get(4)?,
                 session_id: row.get(5)?,
                 shell: row.get(6)?,
+                noisy: noisy_int != 0,
             })
         })?;
         rows.collect()
@@ -193,13 +204,14 @@ impl Database {
 
     pub fn get_commands_for_cluster(&self, cluster_id: i64) -> Result<Vec<CommandRecord>> {
         let mut stmt = self.conn.prepare(
-            "SELECT c.id, c.cmd, c.timestamp, c.directory, c.exit_code, c.session_id, c.shell
+            "SELECT c.id, c.cmd, c.timestamp, c.directory, c.exit_code, c.session_id, c.shell, c.noisy
              FROM commands c
              JOIN cluster_commands cc ON c.id = cc.command_id
              WHERE cc.cluster_id = ?1
              ORDER BY cc.position ASC",
         )?;
         let rows = stmt.query_map(params![cluster_id], |row| {
+            let noisy_int: i32 = row.get(7)?;
             Ok(CommandRecord {
                 id: Some(row.get(0)?),
                 cmd: row.get(1)?,
@@ -208,9 +220,39 @@ impl Database {
                 exit_code: row.get(4)?,
                 session_id: row.get(5)?,
                 shell: row.get(6)?,
+                noisy: noisy_int != 0,
             })
         })?;
         rows.collect()
+    }
+
+    pub fn get_session_commands(&self, session_id: &str) -> Result<Vec<CommandRecord>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, cmd, timestamp, directory, exit_code, session_id, shell, noisy
+             FROM commands WHERE session_id = ?1 ORDER BY timestamp ASC",
+        )?;
+        let rows = stmt.query_map(params![session_id], |row| {
+            let noisy_int: i32 = row.get(7)?;
+            Ok(CommandRecord {
+                id: Some(row.get(0)?),
+                cmd: row.get(1)?,
+                timestamp: row.get(2)?,
+                directory: row.get(3)?,
+                exit_code: row.get(4)?,
+                session_id: row.get(5)?,
+                shell: row.get(6)?,
+                noisy: noisy_int != 0,
+            })
+        })?;
+        rows.collect()
+    }
+
+    pub fn update_noisy_flag(&self, command_id: i64, noisy: bool) -> Result<()> {
+        self.conn.execute(
+            "UPDATE commands SET noisy = ?1 WHERE id = ?2",
+            params![noisy as i32, command_id],
+        )?;
+        Ok(())
     }
 
     pub fn add_tag_to_cluster(&self, cluster_id: i64, tag: &str) -> Result<()> {
@@ -243,6 +285,7 @@ mod tests {
             exit_code: Some(0),
             session_id: "session-1".to_string(),
             shell: "zsh".to_string(),
+            noisy: false,
         }
     }
 
@@ -392,6 +435,7 @@ mod tests {
             exit_code: None,
             session_id: "s1".to_string(),
             shell: "bash".to_string(),
+            noisy: false,
         };
         let id = db.insert_command(&cmd).unwrap();
         let recent = db.get_recent_commands(1).unwrap();
@@ -406,5 +450,107 @@ mod tests {
         let db = Database::open(&db_path).unwrap();
         db.insert_command(&sample_command("test", 1000)).unwrap();
         assert!(db_path.exists());
+    }
+
+    #[test]
+    fn test_wal_mode_enabled() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test-wal.db");
+        let db = Database::open(&db_path).unwrap();
+        let mode: String = db
+            .conn
+            .query_row("PRAGMA journal_mode", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(mode, "wal");
+    }
+
+    #[test]
+    fn test_insert_command_with_noisy_flag() {
+        let db = Database::open_in_memory().unwrap();
+        let mut cmd = sample_command("ls", 1000);
+        cmd.noisy = true;
+        let id = db.insert_command(&cmd).unwrap();
+
+        let recent = db.get_recent_commands(1).unwrap();
+        assert_eq!(recent[0].id, Some(id));
+        assert!(recent[0].noisy);
+    }
+
+    #[test]
+    fn test_noisy_defaults_to_false() {
+        let db = Database::open_in_memory().unwrap();
+        let cmd = sample_command("cargo build", 1000);
+        db.insert_command(&cmd).unwrap();
+
+        let recent = db.get_recent_commands(1).unwrap();
+        assert!(!recent[0].noisy);
+    }
+
+    #[test]
+    fn test_get_session_commands() {
+        let db = Database::open_in_memory().unwrap();
+        let mut cmd1 = sample_command("cargo build", 1000);
+        cmd1.session_id = "sess-A".to_string();
+        let mut cmd2 = sample_command("ls", 1001);
+        cmd2.session_id = "sess-A".to_string();
+        let mut cmd3 = sample_command("cargo test", 1002);
+        cmd3.session_id = "sess-B".to_string();
+
+        db.insert_command(&cmd1).unwrap();
+        db.insert_command(&cmd2).unwrap();
+        db.insert_command(&cmd3).unwrap();
+
+        let session_cmds = db.get_session_commands("sess-A").unwrap();
+        assert_eq!(session_cmds.len(), 2);
+        assert_eq!(session_cmds[0].cmd, "cargo build");
+        assert_eq!(session_cmds[1].cmd, "ls");
+    }
+
+    #[test]
+    fn test_update_noisy_flag() {
+        let db = Database::open_in_memory().unwrap();
+        let cmd = sample_command("ls", 1000);
+        let id = db.insert_command(&cmd).unwrap();
+
+        // Initially not noisy
+        let recent = db.get_recent_commands(1).unwrap();
+        assert!(!recent[0].noisy);
+
+        // Mark as noisy
+        db.update_noisy_flag(id, true).unwrap();
+        let recent = db.get_recent_commands(1).unwrap();
+        assert!(recent[0].noisy);
+
+        // Mark back as not noisy
+        db.update_noisy_flag(id, false).unwrap();
+        let recent = db.get_recent_commands(1).unwrap();
+        assert!(!recent[0].noisy);
+    }
+
+    #[test]
+    fn test_record_roundtrip_file_db() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("roundtrip.db");
+
+        let db = Database::open(&db_path).unwrap();
+        let cmd = CommandRecord {
+            id: None,
+            cmd: "helm list -n production".to_string(),
+            timestamp: 1700000000,
+            directory: "/home/user/infra".to_string(),
+            exit_code: Some(0),
+            session_id: "1234_1700000000".to_string(),
+            shell: "zsh".to_string(),
+            noisy: false,
+        };
+
+        let id = db.insert_command(&cmd).unwrap();
+        assert!(id > 0);
+
+        let recent = db.get_recent_commands(1).unwrap();
+        assert_eq!(recent.len(), 1);
+        assert_eq!(recent[0].cmd, "helm list -n production");
+        assert_eq!(recent[0].session_id, "1234_1700000000");
+        assert_eq!(recent[0].shell, "zsh");
     }
 }

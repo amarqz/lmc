@@ -2,6 +2,7 @@ mod cli;
 mod cluster;
 mod config;
 mod db;
+mod filter;
 mod shell;
 mod ui;
 
@@ -25,10 +26,37 @@ fn main() {
             println!("TODO: save cluster as '{alias}' (from: {from:?})");
         }
         Some(Command::Init { shell }) => {
-            println!("TODO: generate hook for {shell}");
+            match shell.as_str() {
+                "zsh" => print!("{}", shell::init_zsh()),
+                "bash" => print!("{}", shell::init_bash()),
+                "fish" => print!("{}", shell::init_fish()),
+                _ => {
+                    eprintln!("Unsupported shell: {shell}. Supported: zsh, bash, fish");
+                    std::process::exit(1);
+                }
+            }
         }
         Some(Command::Record { cmd, dir, exit_code, session_id, shell }) => {
-            println!("TODO: record command '{cmd}' in {dir} (exit: {exit_code:?}, session: {session_id}, shell: {shell})");
+            let timestamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs() as i64;
+
+            let noisy = filter::is_noisy(&cmd, &cfg.noise_filter);
+
+            let record = db::CommandRecord {
+                id: None,
+                cmd,
+                timestamp,
+                directory: dir,
+                exit_code,
+                session_id,
+                shell,
+                noisy,
+            };
+
+            // Silent operation: never interfere with the user's shell
+            let _ = db::Database::open(&db_path).and_then(|db| db.insert_command(&record));
         }
         None => {
             match cli.query {
@@ -42,6 +70,5 @@ fn main() {
         }
     }
 
-    // Suppress unused variable warning until db_path is used by the storage layer
-    let _ = db_path;
+
 }
