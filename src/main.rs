@@ -56,7 +56,11 @@ fn main() {
             };
 
             // Silent operation: never interfere with the user's shell
-            let _ = db::Database::open(&db_path).and_then(|db| db.insert_command(&record));
+            let _ = db::Database::open(&db_path).and_then(|db| {
+                let command_id = db.insert_command(&record)?;
+                let _ = cluster::assign_to_cluster(&db, &record, command_id, cfg.general.cluster_gap_minutes);
+                Ok(())
+            });
         }
         None => {
             match cli.query {
