@@ -171,6 +171,25 @@ mod tests {
     }
 
     #[test]
+    fn test_tags_applied_when_command_assigned_to_cluster() {
+        let db = Database::open_in_memory().unwrap();
+        let config = crate::config::TagInferenceConfig { custom: vec![] };
+
+        let (cmd_id, record) = insert_cmd(&db, "kubectl get pods", 1000, "/project", "s1", false);
+        let cluster_id = assign_to_cluster(&db, &record, cmd_id, 15).unwrap().unwrap();
+
+        // After wiring, tags should be applied by the caller (main.rs)
+        // For this unit test, manually call tag inference + apply
+        let tags = crate::tags::infer_tags_for_command(&record.cmd, &config);
+        for tag in &tags {
+            db.add_tag_to_cluster(cluster_id, tag).unwrap();
+        }
+
+        let stored_tags = db.get_tags_for_cluster(cluster_id).unwrap();
+        assert!(stored_tags.contains(&"kubernetes".to_string()));
+    }
+
+    #[test]
     fn test_multiple_boundaries_correct_cluster_count() {
         let db = Database::open_in_memory().unwrap();
 

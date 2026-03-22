@@ -59,7 +59,12 @@ fn main() {
             // Silent operation: never interfere with the user's shell
             let _ = db::Database::open(&db_path).and_then(|db| {
                 let command_id = db.insert_command(&record)?;
-                let _ = cluster::assign_to_cluster(&db, &record, command_id, cfg.general.cluster_gap_minutes);
+                if let Ok(Some(cluster_id)) = cluster::assign_to_cluster(&db, &record, command_id, cfg.general.cluster_gap_minutes) {
+                    let inferred = tags::infer_tags_for_command(&record.cmd, &cfg.tag_inference);
+                    for tag in &inferred {
+                        let _ = db.add_tag_to_cluster(cluster_id, tag);
+                    }
+                }
                 Ok(())
             });
         }
