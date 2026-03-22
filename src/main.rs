@@ -4,6 +4,7 @@ mod config;
 mod db;
 mod filter;
 mod shell;
+mod tags;
 mod ui;
 
 use clap::Parser;
