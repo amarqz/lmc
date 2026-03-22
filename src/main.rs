@@ -28,8 +28,10 @@ fn main() {
         Some(Command::Init { shell }) => {
             match shell.as_str() {
                 "zsh" => print!("{}", shell::init_zsh()),
+                "bash" => print!("{}", shell::init_bash()),
+                "fish" => print!("{}", shell::init_fish()),
                 _ => {
-                    eprintln!("Unsupported shell: {shell}. Supported: zsh");
+                    eprintln!("Unsupported shell: {shell}. Supported: zsh, bash, fish");
                     std::process::exit(1);
                 }
             }
