@@ -115,4 +115,56 @@ mod tests {
         sorted.sort();
         assert_eq!(tags, sorted);
     }
+
+    #[test]
+    fn test_custom_mapping_applies() {
+        let config = TagInferenceConfig {
+            custom: vec![TagInferenceMapping {
+                tools: vec!["myctl".to_string()],
+                tags: vec!["myproject".to_string()],
+            }],
+        };
+        let tags = infer_tags_for_command("myctl deploy --env prod", &config);
+        assert_eq!(tags, vec!["myproject"]);
+    }
+
+    #[test]
+    fn test_custom_mapping_merges_with_builtin() {
+        let config = TagInferenceConfig {
+            custom: vec![TagInferenceMapping {
+                tools: vec!["kubectl".to_string()],
+                tags: vec!["production".to_string()],
+            }],
+        };
+        let tags = infer_tags_for_command("kubectl get pods", &config);
+        assert!(tags.contains(&"kubernetes".to_string()));
+        assert!(tags.contains(&"production".to_string()));
+    }
+
+    #[test]
+    fn test_custom_mapping_multiple_tools() {
+        let config = TagInferenceConfig {
+            custom: vec![TagInferenceMapping {
+                tools: vec!["deploy-cli".to_string(), "rollout".to_string()],
+                tags: vec!["deployment".to_string()],
+            }],
+        };
+        let tags1 = infer_tags_for_command("deploy-cli push", &config);
+        let tags2 = infer_tags_for_command("rollout status", &config);
+        assert_eq!(tags1, vec!["deployment"]);
+        assert_eq!(tags2, vec!["deployment"]);
+    }
+
+    #[test]
+    fn test_duplicate_tags_deduplicated() {
+        let config = TagInferenceConfig {
+            custom: vec![TagInferenceMapping {
+                tools: vec!["kubectl".to_string()],
+                tags: vec!["kubernetes".to_string()],
+            }],
+        };
+        let tags = infer_tags_for_command("kubectl apply -f .", &config);
+        let k8s_count = tags.iter().filter(|t| *t == "kubernetes").count();
+        assert_eq!(k8s_count, 1);
+    }
 }
