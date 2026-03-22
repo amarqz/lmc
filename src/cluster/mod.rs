@@ -218,4 +218,44 @@ mod tests {
         let cmds2 = db.get_commands_for_cluster(c2).unwrap();
         assert_eq!(cmds2.len(), 1);
     }
+
+    #[test]
+    fn test_cluster_accumulates_tags_from_multiple_commands() {
+        let db = Database::open_in_memory().unwrap();
+        let config = crate::config::TagInferenceConfig { custom: vec![] };
+
+        // First command: kubectl
+        let (id1, r1) = insert_cmd(&db, "kubectl get pods", 1000, "/project", "s1", false);
+        let cluster_id = assign_to_cluster(&db, &r1, id1, 15).unwrap().unwrap();
+        for tag in crate::tags::infer_tags_for_command(&r1.cmd, &config) {
+            db.add_tag_to_cluster(cluster_id, &tag).unwrap();
+        }
+
+        // Second command: helm (same cluster)
+        let (id2, r2) = insert_cmd(&db, "helm list -n prod", 1060, "/project", "s1", false);
+        let cluster_id2 = assign_to_cluster(&db, &r2, id2, 15).unwrap().unwrap();
+        assert_eq!(cluster_id, cluster_id2);
+        for tag in crate::tags::infer_tags_for_command(&r2.cmd, &config) {
+            db.add_tag_to_cluster(cluster_id2, &tag).unwrap();
+        }
+
+        let tags = db.get_tags_for_cluster(cluster_id).unwrap();
+        assert!(tags.contains(&"kubernetes".to_string()));
+        assert!(tags.contains(&"helm".to_string()));
+    }
+
+    #[test]
+    fn test_unknown_commands_add_no_tags() {
+        let db = Database::open_in_memory().unwrap();
+        let config = crate::config::TagInferenceConfig { custom: vec![] };
+
+        let (id1, r1) = insert_cmd(&db, "echo hello", 1000, "/project", "s1", false);
+        let cluster_id = assign_to_cluster(&db, &r1, id1, 15).unwrap().unwrap();
+        for tag in crate::tags::infer_tags_for_command(&r1.cmd, &config) {
+            db.add_tag_to_cluster(cluster_id, &tag).unwrap();
+        }
+
+        let tags = db.get_tags_for_cluster(cluster_id).unwrap();
+        assert!(tags.is_empty());
+    }
 }
