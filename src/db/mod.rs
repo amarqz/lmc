@@ -255,6 +255,33 @@ impl Database {
         Ok(())
     }
 
+    pub fn get_latest_open_cluster(&self, session_id: &str) -> Result<Option<Cluster>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT c.id, c.alias, c.created_at, c.last_used, c.directory, c.notes
+             FROM clusters c
+             JOIN cluster_commands cc ON c.id = cc.cluster_id
+             JOIN commands cmd ON cc.command_id = cmd.id
+             WHERE c.alias IS NULL AND cmd.session_id = ?1
+             GROUP BY c.id
+             ORDER BY c.created_at DESC
+             LIMIT 1",
+        )?;
+        let mut rows = stmt.query_map(params![session_id], |row| {
+            Ok(Cluster {
+                id: Some(row.get(0)?),
+                alias: row.get(1)?,
+                created_at: row.get(2)?,
+                last_used: row.get(3)?,
+                directory: row.get(4)?,
+                notes: row.get(5)?,
+            })
+        })?;
+        match rows.next() {
+            Some(row) => Ok(Some(row?)),
+            None => Ok(None),
+        }
+    }
+
     pub fn add_tag_to_cluster(&self, cluster_id: i64, tag: &str) -> Result<()> {
         self.conn.execute(
             "INSERT OR IGNORE INTO cluster_tags (cluster_id, tag) VALUES (?1, ?2)",
@@ -525,6 +552,91 @@ mod tests {
         db.update_noisy_flag(id, false).unwrap();
         let recent = db.get_recent_commands(1).unwrap();
         assert!(!recent[0].noisy);
+    }
+
+    #[test]
+    fn test_get_latest_open_cluster_returns_most_recent_for_session() {
+        let db = Database::open_in_memory().unwrap();
+
+        let cluster_id = db.insert_cluster(&Cluster {
+            id: None,
+            alias: None,
+            created_at: 1000,
+            last_used: None,
+            directory: Some("/project".to_string()),
+            notes: None,
+        }).unwrap();
+        let cmd_id = db.insert_command(&CommandRecord {
+            id: None,
+            cmd: "cargo build".to_string(),
+            timestamp: 1000,
+            directory: "/project".to_string(),
+            exit_code: Some(0),
+            session_id: "s1".to_string(),
+            shell: "zsh".to_string(),
+            noisy: false,
+        }).unwrap();
+        db.add_command_to_cluster(cluster_id, cmd_id, 0).unwrap();
+
+        let result = db.get_latest_open_cluster("s1").unwrap();
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().id, Some(cluster_id));
+    }
+
+    #[test]
+    fn test_get_latest_open_cluster_ignores_saved_clusters() {
+        let db = Database::open_in_memory().unwrap();
+
+        let cluster_id = db.insert_cluster(&Cluster {
+            id: None,
+            alias: Some("saved".to_string()),
+            created_at: 1000,
+            last_used: None,
+            directory: Some("/project".to_string()),
+            notes: None,
+        }).unwrap();
+        let cmd_id = db.insert_command(&CommandRecord {
+            id: None,
+            cmd: "cargo build".to_string(),
+            timestamp: 1000,
+            directory: "/project".to_string(),
+            exit_code: Some(0),
+            session_id: "s1".to_string(),
+            shell: "zsh".to_string(),
+            noisy: false,
+        }).unwrap();
+        db.add_command_to_cluster(cluster_id, cmd_id, 0).unwrap();
+
+        let result = db.get_latest_open_cluster("s1").unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_get_latest_open_cluster_ignores_other_sessions() {
+        let db = Database::open_in_memory().unwrap();
+
+        let cluster_id = db.insert_cluster(&Cluster {
+            id: None,
+            alias: None,
+            created_at: 1000,
+            last_used: None,
+            directory: Some("/project".to_string()),
+            notes: None,
+        }).unwrap();
+        let cmd_id = db.insert_command(&CommandRecord {
+            id: None,
+            cmd: "cargo build".to_string(),
+            timestamp: 1000,
+            directory: "/project".to_string(),
+            exit_code: Some(0),
+            session_id: "s1".to_string(),
+            shell: "zsh".to_string(),
+            noisy: false,
+        }).unwrap();
+        db.add_command_to_cluster(cluster_id, cmd_id, 0).unwrap();
+
+        let result = db.get_latest_open_cluster("s2").unwrap();
+        assert!(result.is_none());
     }
 
     #[test]
