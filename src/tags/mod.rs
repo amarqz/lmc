@@ -167,4 +167,55 @@ mod tests {
         let k8s_count = tags.iter().filter(|t| *t == "kubernetes").count();
         assert_eq!(k8s_count, 1);
     }
+
+    #[test]
+    fn test_all_builtin_mappings() {
+        let cfg = empty_config();
+
+        // helm, kubectl → kubernetes
+        assert!(infer_tags_for_command("helm install", &cfg).contains(&"kubernetes".to_string()));
+        assert!(infer_tags_for_command("kubectl apply", &cfg).contains(&"kubernetes".to_string()));
+
+        // docker, docker-compose → docker
+        assert!(infer_tags_for_command("docker build .", &cfg).contains(&"docker".to_string()));
+        assert!(infer_tags_for_command("docker-compose up", &cfg).contains(&"docker".to_string()));
+
+        // git, gh → git, github
+        assert!(infer_tags_for_command("git push", &cfg).contains(&"git".to_string()));
+        assert!(infer_tags_for_command("git push", &cfg).contains(&"github".to_string()));
+        assert!(infer_tags_for_command("gh pr create", &cfg).contains(&"git".to_string()));
+        assert!(infer_tags_for_command("gh pr create", &cfg).contains(&"github".to_string()));
+
+        // psql, pg_dump, pg_restore → postgres
+        assert!(infer_tags_for_command("psql -U admin", &cfg).contains(&"postgres".to_string()));
+        assert!(infer_tags_for_command("pg_dump mydb", &cfg).contains(&"postgres".to_string()));
+        assert!(infer_tags_for_command("pg_restore dump.sql", &cfg).contains(&"postgres".to_string()));
+
+        // aws → aws
+        assert!(infer_tags_for_command("aws s3 ls", &cfg).contains(&"aws".to_string()));
+
+        // terraform, tofu → terraform, infra
+        let tf_tags = infer_tags_for_command("terraform plan", &cfg);
+        assert!(tf_tags.contains(&"terraform".to_string()));
+        assert!(tf_tags.contains(&"infra".to_string()));
+        let tofu_tags = infer_tags_for_command("tofu apply", &cfg);
+        assert!(tofu_tags.contains(&"terraform".to_string()));
+        assert!(tofu_tags.contains(&"infra".to_string()));
+
+        // ansible, ansible-playbook → ansible, infra
+        assert!(infer_tags_for_command("ansible all -m ping", &cfg).contains(&"ansible".to_string()));
+        assert!(infer_tags_for_command("ansible all -m ping", &cfg).contains(&"infra".to_string()));
+        let ap_tags = infer_tags_for_command("ansible-playbook site.yml", &cfg);
+        assert!(ap_tags.contains(&"ansible".to_string()));
+        assert!(ap_tags.contains(&"infra".to_string()));
+
+        // cargo, rustc → rust
+        assert!(infer_tags_for_command("cargo test", &cfg).contains(&"rust".to_string()));
+        assert!(infer_tags_for_command("rustc main.rs", &cfg).contains(&"rust".to_string()));
+
+        // npm, yarn, pnpm → node
+        assert!(infer_tags_for_command("npm install", &cfg).contains(&"node".to_string()));
+        assert!(infer_tags_for_command("yarn add react", &cfg).contains(&"node".to_string()));
+        assert!(infer_tags_for_command("pnpm run build", &cfg).contains(&"node".to_string()));
+    }
 }
