@@ -73,6 +73,38 @@ fi
     .to_string()
 }
 
+/// Generate the fish shell hook script.
+pub fn init_fish() -> String {
+    r#"# lmc shell integration — fish
+# Add to ~/.config/fish/config.fish: lmc init fish | source
+
+if not set -q _LMC_HOOKED
+    set -g _LMC_HOOKED 1
+    set -g _LMC_SESSION_ID (string join "" $fish_pid "_" (date +%s))
+    set -g _LMC_CMD ""
+
+    function _lmc_preexec --on-event fish_preexec
+        set -g _LMC_CMD $argv
+    end
+
+    function _lmc_postexec --on-event fish_postexec
+        set -l exit_code $status
+        if test -n "$_LMC_CMD"
+            command lmc record \
+                --cmd "$_LMC_CMD" \
+                --dir "$PWD" \
+                --exit-code $exit_code \
+                --session-id "$_LMC_SESSION_ID" \
+                --shell fish \
+                >/dev/null 2>&1 & disown
+            set -g _LMC_CMD ""
+        end
+    end
+end
+"#
+    .to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -161,5 +193,42 @@ mod tests {
     fn test_init_bash_uses_history_for_full_command() {
         let script = init_bash();
         assert!(script.contains("history 1"), "missing history 1 for full command line capture");
+    }
+
+    #[test]
+    fn test_init_fish_contains_preexec_event() {
+        let script = init_fish();
+        assert!(script.contains("fish_preexec"), "missing fish_preexec event handler");
+    }
+
+    #[test]
+    fn test_init_fish_contains_postexec_event() {
+        let script = init_fish();
+        assert!(script.contains("fish_postexec"), "missing fish_postexec event handler");
+    }
+
+    #[test]
+    fn test_init_fish_contains_session_id() {
+        let script = init_fish();
+        assert!(script.contains("_LMC_SESSION_ID"), "missing session ID generation");
+        assert!(script.contains("fish_pid"), "missing fish_pid in session ID");
+    }
+
+    #[test]
+    fn test_init_fish_contains_record_call() {
+        let script = init_fish();
+        assert!(script.contains("lmc record"), "missing lmc record invocation");
+    }
+
+    #[test]
+    fn test_init_fish_contains_idempotency_guard() {
+        let script = init_fish();
+        assert!(script.contains("_LMC_HOOKED"), "missing idempotency guard");
+    }
+
+    #[test]
+    fn test_init_fish_contains_background_execution() {
+        let script = init_fish();
+        assert!(script.contains("& disown"), "missing background disown operator");
     }
 }
