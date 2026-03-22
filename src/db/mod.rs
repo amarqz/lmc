@@ -282,6 +282,46 @@ impl Database {
         }
     }
 
+    pub fn get_last_meaningful_command_for_cluster(
+        &self,
+        cluster_id: i64,
+    ) -> Result<Option<CommandRecord>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT c.id, c.cmd, c.timestamp, c.directory, c.exit_code, c.session_id, c.shell, c.noisy
+             FROM commands c
+             JOIN cluster_commands cc ON c.id = cc.command_id
+             WHERE cc.cluster_id = ?1 AND c.noisy = 0
+             ORDER BY cc.position DESC
+             LIMIT 1",
+        )?;
+        let mut rows = stmt.query_map(params![cluster_id], |row| {
+            let noisy_int: i32 = row.get(7)?;
+            Ok(CommandRecord {
+                id: Some(row.get(0)?),
+                cmd: row.get(1)?,
+                timestamp: row.get(2)?,
+                directory: row.get(3)?,
+                exit_code: row.get(4)?,
+                session_id: row.get(5)?,
+                shell: row.get(6)?,
+                noisy: noisy_int != 0,
+            })
+        })?;
+        match rows.next() {
+            Some(row) => Ok(Some(row?)),
+            None => Ok(None),
+        }
+    }
+
+    pub fn get_next_position_for_cluster(&self, cluster_id: i64) -> Result<i32> {
+        let max_pos: Option<i32> = self.conn.query_row(
+            "SELECT MAX(position) FROM cluster_commands WHERE cluster_id = ?1",
+            params![cluster_id],
+            |row| row.get(0),
+        )?;
+        Ok(max_pos.map_or(0, |p| p + 1))
+    }
+
     pub fn add_tag_to_cluster(&self, cluster_id: i64, tag: &str) -> Result<()> {
         self.conn.execute(
             "INSERT OR IGNORE INTO cluster_tags (cluster_id, tag) VALUES (?1, ?2)",
@@ -637,6 +677,74 @@ mod tests {
 
         let result = db.get_latest_open_cluster("s2").unwrap();
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_get_last_meaningful_command_for_cluster() {
+        let db = Database::open_in_memory().unwrap();
+        let cluster_id = db.insert_cluster(&Cluster {
+            id: None, alias: None, created_at: 1000, last_used: None,
+            directory: Some("/project".to_string()), notes: None,
+        }).unwrap();
+        let cmd1_id = db.insert_command(&CommandRecord {
+            id: None, cmd: "cargo build".to_string(), timestamp: 1000,
+            directory: "/project".to_string(), exit_code: Some(0),
+            session_id: "s1".to_string(), shell: "zsh".to_string(), noisy: false,
+        }).unwrap();
+        db.add_command_to_cluster(cluster_id, cmd1_id, 0).unwrap();
+
+        let result = db.get_last_meaningful_command_for_cluster(cluster_id).unwrap();
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().cmd, "cargo build");
+    }
+
+    #[test]
+    fn test_get_last_meaningful_command_skips_noisy() {
+        let db = Database::open_in_memory().unwrap();
+        let cluster_id = db.insert_cluster(&Cluster {
+            id: None, alias: None, created_at: 1000, last_used: None,
+            directory: Some("/project".to_string()), notes: None,
+        }).unwrap();
+        let cmd1_id = db.insert_command(&CommandRecord {
+            id: None, cmd: "cargo build".to_string(), timestamp: 1000,
+            directory: "/project".to_string(), exit_code: Some(0),
+            session_id: "s1".to_string(), shell: "zsh".to_string(), noisy: false,
+        }).unwrap();
+        let cmd2_id = db.insert_command(&CommandRecord {
+            id: None, cmd: "ls".to_string(), timestamp: 1010,
+            directory: "/project".to_string(), exit_code: Some(0),
+            session_id: "s1".to_string(), shell: "zsh".to_string(), noisy: true,
+        }).unwrap();
+        db.add_command_to_cluster(cluster_id, cmd1_id, 0).unwrap();
+        db.add_command_to_cluster(cluster_id, cmd2_id, 1).unwrap();
+
+        let result = db.get_last_meaningful_command_for_cluster(cluster_id).unwrap();
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().cmd, "cargo build");
+    }
+
+    #[test]
+    fn test_get_next_position_for_empty_cluster() {
+        let db = Database::open_in_memory().unwrap();
+        let cluster_id = db.insert_cluster(&Cluster {
+            id: None, alias: None, created_at: 1000, last_used: None,
+            directory: Some("/project".to_string()), notes: None,
+        }).unwrap();
+        let pos = db.get_next_position_for_cluster(cluster_id).unwrap();
+        assert_eq!(pos, 0);
+    }
+
+    #[test]
+    fn test_get_next_position_for_cluster_with_commands() {
+        let db = Database::open_in_memory().unwrap();
+        let cluster_id = db.insert_cluster(&Cluster {
+            id: None, alias: None, created_at: 1000, last_used: None,
+            directory: Some("/project".to_string()), notes: None,
+        }).unwrap();
+        let cmd_id = db.insert_command(&sample_command("cargo build", 1000)).unwrap();
+        db.add_command_to_cluster(cluster_id, cmd_id, 0).unwrap();
+        let pos = db.get_next_position_for_cluster(cluster_id).unwrap();
+        assert_eq!(pos, 1);
     }
 
     #[test]
