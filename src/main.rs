@@ -24,8 +24,18 @@ fn main() {
     let cli = Cli::parse();
 
     match cli.command {
-        Some(Command::Save { alias, from }) => {
-            println!("TODO: save cluster as '{alias}' (from: {from:?})");
+        Some(Command::Save { alias, from: _ }) => {
+            let db = match db::Database::open(&db_path) {
+                Ok(d) => d,
+                Err(e) => {
+                    eprintln!("Error opening database: {e}");
+                    std::process::exit(1);
+                }
+            };
+            if let Err(e) = save::run(&alias, &db) {
+                eprintln!("Error saving cluster: {e}");
+                std::process::exit(1);
+            }
         }
         Some(Command::Init { shell }) => {
             match shell.as_str() {
