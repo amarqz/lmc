@@ -67,7 +67,7 @@ fn prompt_collision_menu(alias: &str, existing: &Cluster, db: &Database) -> Coll
         .items(items)
         .default(0)
         .interact()
-        .unwrap_or(3);
+        .unwrap_or(3); // 3 = Cancel (last item)
 
     match selection {
         0 => {
@@ -131,6 +131,7 @@ pub fn run(alias: &str, db: &Database) -> Result<()> {
                         return Ok(());
                     }
                     CollisionResolution::DeleteExisting => {
+                        let existing_id = existing.id.unwrap();
                         let confirmed = Confirm::new()
                             .with_prompt(format!(
                                 "This will permanently delete \"{}\". Continue?",
@@ -140,7 +141,7 @@ pub fn run(alias: &str, db: &Database) -> Result<()> {
                             .interact()
                             .unwrap_or(false);
                         if confirmed {
-                            db.delete_cluster(existing.id.unwrap())?;
+                            db.delete_cluster(existing_id)?;
                             let summary = save_cluster(new_cluster_id, &current_alias, db)?;
                             print_summary(&summary);
                             return Ok(());
