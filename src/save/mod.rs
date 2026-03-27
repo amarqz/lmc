@@ -1,4 +1,5 @@
 use crate::db::{Cluster, CommandRecord, Database};
+use dialoguer::{Confirm, Input, Select};
 use rusqlite::Result;
 
 pub struct SaveSummary {
@@ -25,8 +26,134 @@ pub fn save_cluster(cluster_id: i64, alias: &str, db: &Database) -> Result<SaveS
     })
 }
 
+fn print_summary(summary: &SaveSummary) {
+    let tag_str = if summary.tags.is_empty() {
+        "no tags".to_string()
+    } else {
+        summary.tags.join(", ")
+    };
+    println!(
+        "Saved \"{}\" — {} commands · {}",
+        summary.alias, summary.command_count, tag_str
+    );
+}
+
+fn prompt_collision_menu(alias: &str, existing: &Cluster, db: &Database) -> CollisionResolution {
+    let existing_id = existing.id.unwrap();
+    let existing_cmds = db.get_commands_for_cluster(existing_id).unwrap_or_default();
+    let existing_tags = db.get_tags_for_cluster(existing_id).unwrap_or_default();
+    let tag_str = if existing_tags.is_empty() {
+        "no tags".to_string()
+    } else {
+        existing_tags.join(", ")
+    };
+
+    let prompt = format!(
+        "Alias \"{}\" is already in use ({} commands · {})",
+        alias,
+        existing_cmds.len(),
+        tag_str
+    );
+
+    let items = &[
+        "Save under a different name",
+        "Rename the existing cluster, then save",
+        "Delete the existing cluster and save",
+        "Cancel",
+    ];
+
+    let selection = Select::new()
+        .with_prompt(&prompt)
+        .items(items)
+        .default(0)
+        .interact()
+        .unwrap_or(3);
+
+    match selection {
+        0 => {
+            let new_alias: String = Input::new()
+                .with_prompt("New alias")
+                .interact_text()
+                .unwrap_or_default();
+            CollisionResolution::SaveUnderNewName(new_alias)
+        }
+        1 => {
+            let new_name: String = Input::new()
+                .with_prompt(format!("New name for \"{}\"", alias))
+                .interact_text()
+                .unwrap_or_default();
+            CollisionResolution::RenameExisting(new_name)
+        }
+        2 => CollisionResolution::DeleteExisting,
+        _ => CollisionResolution::Cancel,
+    }
+}
+
 pub fn run(alias: &str, db: &Database) -> Result<()> {
-    todo!()
+    let new_cluster = match db.get_most_recent_open_cluster()? {
+        Some(c) => c,
+        None => {
+            eprintln!(
+                "No unsaved commands found. Run some commands first, then `lmc save <alias>`."
+            );
+            return Ok(());
+        }
+    };
+
+    let new_cluster_id = new_cluster.id.unwrap();
+    let mut current_alias = alias.to_string();
+
+    loop {
+        match db.get_cluster_by_alias(&current_alias)? {
+            None => {
+                let summary = save_cluster(new_cluster_id, &current_alias, db)?;
+                print_summary(&summary);
+                return Ok(());
+            }
+            Some(existing) => {
+                let resolution = prompt_collision_menu(&current_alias, &existing, db);
+                match resolution {
+                    CollisionResolution::SaveUnderNewName(new_alias) => {
+                        if new_alias.is_empty() {
+                            continue;
+                        }
+                        current_alias = new_alias;
+                    }
+                    CollisionResolution::RenameExisting(new_name) => {
+                        if new_name.is_empty() {
+                            continue;
+                        }
+                        let existing_id = existing.id.unwrap();
+                        db.update_cluster_alias(existing_id, &new_name)?;
+                        let summary = save_cluster(new_cluster_id, &current_alias, db)?;
+                        println!("Renamed \"{}\" → \"{}\"", current_alias, new_name);
+                        print_summary(&summary);
+                        return Ok(());
+                    }
+                    CollisionResolution::DeleteExisting => {
+                        let confirmed = Confirm::new()
+                            .with_prompt(format!(
+                                "This will permanently delete \"{}\". Continue?",
+                                current_alias
+                            ))
+                            .default(false)
+                            .interact()
+                            .unwrap_or(false);
+                        if confirmed {
+                            db.delete_cluster(existing.id.unwrap())?;
+                            let summary = save_cluster(new_cluster_id, &current_alias, db)?;
+                            print_summary(&summary);
+                            return Ok(());
+                        }
+                        // Declined delete — loop back to show menu again
+                    }
+                    CollisionResolution::Cancel => {
+                        return Ok(());
+                    }
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]
