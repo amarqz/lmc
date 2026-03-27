@@ -310,10 +310,13 @@ impl Database {
     }
 
     pub fn update_cluster_alias(&self, cluster_id: i64, alias: &str) -> Result<()> {
-        self.conn.execute(
+        let rows = self.conn.execute(
             "UPDATE clusters SET alias = ?1 WHERE id = ?2",
             params![alias, cluster_id],
         )?;
+        if rows == 0 {
+            return Err(rusqlite::Error::QueryReturnedNoRows);
+        }
         Ok(())
     }
 
@@ -911,6 +914,13 @@ mod tests {
 
         assert!(db.get_cluster_by_alias("old-name").unwrap().is_none());
         assert!(db.get_cluster_by_alias("new-name").unwrap().is_some());
+    }
+
+    #[test]
+    fn test_update_cluster_alias_nonexistent_id_returns_error() {
+        let db = Database::open_in_memory().unwrap();
+        let result = db.update_cluster_alias(9999, "ghost");
+        assert!(result.is_err());
     }
 
     #[test]
