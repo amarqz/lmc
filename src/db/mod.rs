@@ -282,6 +282,57 @@ impl Database {
         }
     }
 
+    pub fn get_most_recent_open_cluster(&self) -> Result<Option<Cluster>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT c.id, c.alias, c.created_at, c.last_used, c.directory, c.notes
+             FROM clusters c
+             JOIN cluster_commands cc ON c.id = cc.cluster_id
+             JOIN commands cmd ON cc.command_id = cmd.id
+             WHERE c.alias IS NULL
+             GROUP BY c.id
+             ORDER BY MAX(cmd.timestamp) DESC
+             LIMIT 1",
+        )?;
+        let mut rows = stmt.query_map([], |row| {
+            Ok(Cluster {
+                id: Some(row.get(0)?),
+                alias: row.get(1)?,
+                created_at: row.get(2)?,
+                last_used: row.get(3)?,
+                directory: row.get(4)?,
+                notes: row.get(5)?,
+            })
+        })?;
+        match rows.next() {
+            Some(row) => Ok(Some(row?)),
+            None => Ok(None),
+        }
+    }
+
+    pub fn update_cluster_alias(&self, cluster_id: i64, alias: &str) -> Result<()> {
+        self.conn.execute(
+            "UPDATE clusters SET alias = ?1 WHERE id = ?2",
+            params![alias, cluster_id],
+        )?;
+        Ok(())
+    }
+
+    pub fn delete_cluster(&self, cluster_id: i64) -> Result<()> {
+        self.conn.execute(
+            "DELETE FROM cluster_tags WHERE cluster_id = ?1",
+            params![cluster_id],
+        )?;
+        self.conn.execute(
+            "DELETE FROM cluster_commands WHERE cluster_id = ?1",
+            params![cluster_id],
+        )?;
+        self.conn.execute(
+            "DELETE FROM clusters WHERE id = ?1",
+            params![cluster_id],
+        )?;
+        Ok(())
+    }
+
     pub fn get_last_meaningful_command_for_cluster(
         &self,
         cluster_id: i64,
@@ -772,5 +823,137 @@ mod tests {
         assert_eq!(recent[0].cmd, "helm list -n production");
         assert_eq!(recent[0].session_id, "1234_1700000000");
         assert_eq!(recent[0].shell, "zsh");
+    }
+
+    #[test]
+    fn test_get_most_recent_open_cluster_returns_latest() {
+        let db = Database::open_in_memory().unwrap();
+
+        // Cluster 1: older commands
+        let c1_id = db.insert_cluster(&Cluster {
+            id: None, alias: None, created_at: 1000, last_used: None,
+            directory: Some("/p1".to_string()), notes: None,
+        }).unwrap();
+        let cmd1_id = db.insert_command(&CommandRecord {
+            id: None, cmd: "cargo build".to_string(), timestamp: 1000,
+            directory: "/p1".to_string(), exit_code: Some(0),
+            session_id: "s1".to_string(), shell: "zsh".to_string(), noisy: false,
+        }).unwrap();
+        db.add_command_to_cluster(c1_id, cmd1_id, 0).unwrap();
+
+        // Cluster 2: newer commands
+        let c2_id = db.insert_cluster(&Cluster {
+            id: None, alias: None, created_at: 2000, last_used: None,
+            directory: Some("/p2".to_string()), notes: None,
+        }).unwrap();
+        let cmd2_id = db.insert_command(&CommandRecord {
+            id: None, cmd: "npm install".to_string(), timestamp: 2000,
+            directory: "/p2".to_string(), exit_code: Some(0),
+            session_id: "s2".to_string(), shell: "zsh".to_string(), noisy: false,
+        }).unwrap();
+        db.add_command_to_cluster(c2_id, cmd2_id, 0).unwrap();
+
+        let result = db.get_most_recent_open_cluster().unwrap();
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().id, Some(c2_id));
+    }
+
+    #[test]
+    fn test_get_most_recent_open_cluster_ignores_aliased() {
+        let db = Database::open_in_memory().unwrap();
+
+        let c1_id = db.insert_cluster(&Cluster {
+            id: None, alias: Some("saved".to_string()), created_at: 2000, last_used: None,
+            directory: Some("/p1".to_string()), notes: None,
+        }).unwrap();
+        let cmd1_id = db.insert_command(&CommandRecord {
+            id: None, cmd: "cargo build".to_string(), timestamp: 2000,
+            directory: "/p1".to_string(), exit_code: Some(0),
+            session_id: "s1".to_string(), shell: "zsh".to_string(), noisy: false,
+        }).unwrap();
+        db.add_command_to_cluster(c1_id, cmd1_id, 0).unwrap();
+
+        let result = db.get_most_recent_open_cluster().unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_get_most_recent_open_cluster_none_when_empty() {
+        let db = Database::open_in_memory().unwrap();
+        let result = db.get_most_recent_open_cluster().unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_update_cluster_alias_sets_alias() {
+        let db = Database::open_in_memory().unwrap();
+        let cluster_id = db.insert_cluster(&Cluster {
+            id: None, alias: None, created_at: 1000, last_used: None,
+            directory: Some("/project".to_string()), notes: None,
+        }).unwrap();
+
+        db.update_cluster_alias(cluster_id, "my-alias").unwrap();
+
+        let retrieved = db.get_cluster_by_alias("my-alias").unwrap();
+        assert!(retrieved.is_some());
+        assert_eq!(retrieved.unwrap().id, Some(cluster_id));
+    }
+
+    #[test]
+    fn test_update_cluster_alias_can_rename_existing() {
+        let db = Database::open_in_memory().unwrap();
+        let cluster_id = db.insert_cluster(&Cluster {
+            id: None, alias: Some("old-name".to_string()), created_at: 1000, last_used: None,
+            directory: Some("/project".to_string()), notes: None,
+        }).unwrap();
+
+        db.update_cluster_alias(cluster_id, "new-name").unwrap();
+
+        assert!(db.get_cluster_by_alias("old-name").unwrap().is_none());
+        assert!(db.get_cluster_by_alias("new-name").unwrap().is_some());
+    }
+
+    #[test]
+    fn test_delete_cluster_removes_cluster_tags_and_links() {
+        let db = Database::open_in_memory().unwrap();
+        let cluster_id = db.insert_cluster(&Cluster {
+            id: None, alias: Some("to-delete".to_string()), created_at: 1000, last_used: None,
+            directory: Some("/project".to_string()), notes: None,
+        }).unwrap();
+        let cmd_id = db.insert_command(&CommandRecord {
+            id: None, cmd: "cargo build".to_string(), timestamp: 1000,
+            directory: "/project".to_string(), exit_code: Some(0),
+            session_id: "s1".to_string(), shell: "zsh".to_string(), noisy: false,
+        }).unwrap();
+        db.add_command_to_cluster(cluster_id, cmd_id, 0).unwrap();
+        db.add_tag_to_cluster(cluster_id, "rust").unwrap();
+
+        db.delete_cluster(cluster_id).unwrap();
+
+        assert!(db.get_cluster_by_alias("to-delete").unwrap().is_none());
+        assert!(db.get_commands_for_cluster(cluster_id).unwrap().is_empty());
+        assert!(db.get_tags_for_cluster(cluster_id).unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_delete_cluster_preserves_underlying_commands() {
+        // Deleting a cluster must NOT delete the raw commands from the commands table
+        let db = Database::open_in_memory().unwrap();
+        let cluster_id = db.insert_cluster(&Cluster {
+            id: None, alias: Some("to-delete".to_string()), created_at: 1000, last_used: None,
+            directory: Some("/project".to_string()), notes: None,
+        }).unwrap();
+        let cmd_id = db.insert_command(&CommandRecord {
+            id: None, cmd: "cargo build".to_string(), timestamp: 1000,
+            directory: "/project".to_string(), exit_code: Some(0),
+            session_id: "s1".to_string(), shell: "zsh".to_string(), noisy: false,
+        }).unwrap();
+        db.add_command_to_cluster(cluster_id, cmd_id, 0).unwrap();
+
+        db.delete_cluster(cluster_id).unwrap();
+
+        let all_cmds = db.get_recent_commands(10).unwrap();
+        assert_eq!(all_cmds.len(), 1);
+        assert_eq!(all_cmds[0].cmd, "cargo build");
     }
 }
