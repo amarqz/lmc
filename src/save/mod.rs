@@ -39,7 +39,7 @@ fn print_summary(summary: &SaveSummary) {
 }
 
 fn prompt_collision_menu(alias: &str, existing: &Cluster, db: &Database) -> CollisionResolution {
-    let existing_id = existing.id.unwrap();
+    let existing_id = existing.id.expect("cluster from DB always has id");
     let existing_cmds = db.get_commands_for_cluster(existing_id).unwrap_or_default();
     let existing_tags = db.get_tags_for_cluster(existing_id).unwrap_or_default();
     let tag_str = if existing_tags.is_empty() {
@@ -100,7 +100,7 @@ pub fn run(alias: &str, db: &Database) -> Result<()> {
         }
     };
 
-    let new_cluster_id = new_cluster.id.unwrap();
+    let new_cluster_id = new_cluster.id.expect("cluster from DB always has id");
     let mut current_alias = alias.to_string();
 
     loop {
@@ -123,15 +123,15 @@ pub fn run(alias: &str, db: &Database) -> Result<()> {
                         if new_name.is_empty() {
                             continue;
                         }
-                        let existing_id = existing.id.unwrap();
+                        let existing_id = existing.id.expect("cluster from DB always has id");
                         db.update_cluster_alias(existing_id, &new_name)?;
                         let summary = save_cluster(new_cluster_id, &current_alias, db)?;
-                        println!("Renamed \"{}\" → \"{}\"", current_alias, new_name);
+                        println!("Existing cluster renamed: \"{}\" → \"{}\"", current_alias, new_name);
                         print_summary(&summary);
                         return Ok(());
                     }
                     CollisionResolution::DeleteExisting => {
-                        let existing_id = existing.id.unwrap();
+                        let existing_id = existing.id.expect("cluster from DB always has id");
                         let confirmed = Confirm::new()
                             .with_prompt(format!(
                                 "This will permanently delete \"{}\". Continue?",
@@ -270,5 +270,29 @@ mod tests {
         assert_eq!(summary.alias, "my-flow");
         assert!(db.get_cluster_by_alias("my-flow-old").unwrap().is_some());
         assert_eq!(db.get_cluster_by_alias("my-flow").unwrap().unwrap().id, Some(new_id));
+    }
+
+    #[test]
+    fn test_run_with_no_open_cluster_returns_ok() {
+        // run() should return Ok(()) immediately when there are no open clusters
+        // (the eprintln message is verified manually; we just ensure no panic/error)
+        let db = Database::open_in_memory().unwrap();
+        // Insert a saved (aliased) cluster — should be ignored
+        let saved_id = db.insert_cluster(&Cluster {
+            id: None, alias: Some("already-saved".to_string()), created_at: 1000,
+            last_used: None, directory: Some("/p".to_string()), notes: None,
+        }).unwrap();
+        let cmd_id = db.insert_command(&CommandRecord {
+            id: None, cmd: "cargo build".to_string(), timestamp: 1000,
+            directory: "/p".to_string(), exit_code: Some(0),
+            session_id: "s1".to_string(), shell: "zsh".to_string(), noisy: false,
+        }).unwrap();
+        db.add_command_to_cluster(saved_id, cmd_id, 0).unwrap();
+
+        // No open (unaliased) clusters — run should return Ok immediately
+        let result = run("new-alias", &db);
+        assert!(result.is_ok());
+        // Alias was NOT saved (no open cluster to save)
+        assert!(db.get_cluster_by_alias("new-alias").unwrap().is_none());
     }
 }
