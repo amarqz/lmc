@@ -27,6 +27,24 @@ impl App {
     pub fn selected_command(&self) -> Option<&CommandRecord> {
         self.commands.get(self.selected)
     }
+
+    pub fn move_up(&mut self) {
+        if self.commands.is_empty() {
+            return;
+        }
+        if self.selected == 0 {
+            self.selected = self.commands.len() - 1;
+        } else {
+            self.selected -= 1;
+        }
+    }
+
+    pub fn move_down(&mut self) {
+        if self.commands.is_empty() {
+            return;
+        }
+        self.selected = (self.selected + 1) % self.commands.len();
+    }
 }
 
 #[cfg(test)]
@@ -68,5 +86,47 @@ mod tests {
     fn test_selected_command_empty_returns_none() {
         let app = App::new("x".to_string(), vec![], vec![], None);
         assert!(app.selected_command().is_none());
+    }
+
+    #[test]
+    fn test_move_down_advances_selection() {
+        let cmds = vec![make_cmd("a"), make_cmd("b"), make_cmd("c")];
+        let mut app = App::new("x".to_string(), cmds, vec![], None);
+        app.move_down();
+        assert_eq!(app.selected, 1);
+    }
+
+    #[test]
+    fn test_move_down_wraps_to_zero() {
+        let cmds = vec![make_cmd("a"), make_cmd("b"), make_cmd("c")];
+        let mut app = App::new("x".to_string(), cmds, vec![], None);
+        app.selected = 2;
+        app.move_down();
+        assert_eq!(app.selected, 0);
+    }
+
+    #[test]
+    fn test_move_up_decrements_selection() {
+        let cmds = vec![make_cmd("a"), make_cmd("b"), make_cmd("c")];
+        let mut app = App::new("x".to_string(), cmds, vec![], None);
+        app.selected = 2;
+        app.move_up();
+        assert_eq!(app.selected, 1);
+    }
+
+    #[test]
+    fn test_move_up_wraps_to_last() {
+        let cmds = vec![make_cmd("a"), make_cmd("b"), make_cmd("c")];
+        let mut app = App::new("x".to_string(), cmds, vec![], None);
+        app.move_up();
+        assert_eq!(app.selected, 2);
+    }
+
+    #[test]
+    fn test_move_on_empty_does_nothing() {
+        let mut app = App::new("x".to_string(), vec![], vec![], None);
+        app.move_up();
+        app.move_down();
+        assert_eq!(app.selected, 0);
     }
 }
