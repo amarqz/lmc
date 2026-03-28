@@ -69,6 +69,21 @@ pub fn format_relative_time(now_secs: i64, then_secs: i64) -> String {
     }
 }
 
+pub fn alias_not_found_message(alias: &str, saved_aliases: &[String]) -> String {
+    if saved_aliases.is_empty() {
+        format!(
+            "lmc: no alias \"{}\" found\nNo aliases saved yet. Run `lmc save <alias>` after a session.",
+            alias
+        )
+    } else {
+        let names = saved_aliases.join(", ");
+        format!(
+            "lmc: no alias \"{}\" found\nSaved aliases: {}\nRun `lmc` to browse all aliases.",
+            alias, names
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -178,5 +193,21 @@ mod tests {
     fn test_relative_time_plural_vs_singular() {
         assert_eq!(format_relative_time(86400, 0), "1 day ago");
         assert_eq!(format_relative_time(86400 * 2, 0), "2 days ago");
+    }
+
+    #[test]
+    fn test_alias_not_found_with_suggestions() {
+        let msg = alias_not_found_message("helm-dbg", &["helm-debug-prod".to_string(), "db-migrate".to_string()]);
+        assert!(msg.contains("helm-dbg"));
+        assert!(msg.contains("helm-debug-prod"));
+        assert!(msg.contains("db-migrate"));
+        assert!(msg.contains("lmc` to browse"));
+    }
+
+    #[test]
+    fn test_alias_not_found_no_aliases() {
+        let msg = alias_not_found_message("helm-dbg", &[]);
+        assert!(msg.contains("helm-dbg"));
+        assert!(msg.contains("lmc save"));
     }
 }
