@@ -116,15 +116,38 @@ pub fn run(alias: &str, db: &Database) -> Result<()> {
 }
 
 fn run_tui(app: &mut App) -> Result<()> {
+    use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
+    use std::io;
+
+    enable_raw_mode()?;
+    let result = run_tui_inner(app);
+    let _ = disable_raw_mode();
+    let _ = crossterm::execute!(io::stdout(), crossterm::terminal::LeaveAlternateScreen);
+
+    let copied_cmd = result?;
+
+    if let Some(cmd) = copied_cmd {
+        match arboard::Clipboard::new().and_then(|mut c| c.set_text(&cmd)) {
+            Ok(_) => println!("Copied: {}", cmd),
+            Err(_) => {
+                eprintln!("Warning: clipboard not available.");
+                println!("{}", cmd);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn run_tui_inner(app: &mut App) -> Result<Option<String>> {
     use crossterm::{
         event::{self, Event, KeyCode, KeyEventKind},
         execute,
-        terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+        terminal::EnterAlternateScreen,
     };
     use ratatui::{backend::CrosstermBackend, Terminal};
     use std::io;
 
-    enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
     let backend = CrosstermBackend::new(stdout);
@@ -160,22 +183,8 @@ fn run_tui(app: &mut App) -> Result<()> {
         }
     };
 
-    // Always restore terminal before doing anything else
-    disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
     terminal.show_cursor()?;
-
-    if let Some(cmd) = copied_cmd {
-        match arboard::Clipboard::new().and_then(|mut c| c.set_text(&cmd)) {
-            Ok(_) => println!("Copied: {}", cmd),
-            Err(_) => {
-                eprintln!("Warning: clipboard not available.");
-                println!("{}", cmd);
-            }
-        }
-    }
-
-    Ok(())
+    Ok(copied_cmd)
 }
 
 #[cfg(test)]
