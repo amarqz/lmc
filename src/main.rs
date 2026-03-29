@@ -86,7 +86,17 @@ fn main() {
         None => {
             match cli.query {
                 Some(query) => {
-                    println!("TODO: look up alias or search for '{query}'");
+                    let db = match db::Database::open(&db_path) {
+                        Ok(d) => d,
+                        Err(e) => {
+                            eprintln!("Error opening database: {e}");
+                            std::process::exit(1);
+                        }
+                    };
+                    if let Err(e) = retrieval::run(&query, &db) {
+                        eprintln!("Error: {e}");
+                        std::process::exit(1);
+                    }
                 }
                 None => {
                     println!("TODO: show index of all saved aliases");
