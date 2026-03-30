@@ -1,4 +1,4 @@
-use crate::db::{Cluster, CommandRecord, Database};
+use crate::db::{Cluster, Database};
 use dialoguer::{Confirm, Input, Select};
 use rusqlite::Result;
 
@@ -160,6 +160,7 @@ pub fn run(alias: &str, db: &Database) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::CommandRecord;
 
     fn setup_open_cluster(db: &Database) -> i64 {
         let cluster_id = db.insert_cluster(&Cluster {

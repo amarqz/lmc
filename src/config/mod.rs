@@ -4,7 +4,7 @@ use std::env;
 use std::fs;
 use std::path::PathBuf;
 
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Default, Serialize, Deserialize, PartialEq)]
 pub struct Config {
     #[serde(default = "default_general")]
     pub general: GeneralConfig,
@@ -36,7 +36,7 @@ pub struct TagInferenceMapping {
     pub tags: Vec<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Default, Serialize, Deserialize, PartialEq)]
 pub struct TagInferenceConfig {
     #[serde(default)]
     pub custom: Vec<TagInferenceMapping>,
@@ -72,17 +72,6 @@ fn default_action() -> String {
     "copy".to_string()
 }
 
-impl Default for Config {
-    fn default() -> Self {
-        Config {
-            general: default_general(),
-            noise_filter: NoiseFilterConfig::default(),
-            tag_inference: TagInferenceConfig::default(),
-            ui: UiConfig::default(),
-        }
-    }
-}
-
 impl Default for GeneralConfig {
     fn default() -> Self {
         default_general()
@@ -94,12 +83,6 @@ impl Default for NoiseFilterConfig {
         NoiseFilterConfig {
             ignored_commands: default_ignored_commands(),
         }
-    }
-}
-
-impl Default for TagInferenceConfig {
-    fn default() -> Self {
-        TagInferenceConfig { custom: vec![] }
     }
 }
 
@@ -125,10 +108,10 @@ pub fn default_db_path() -> Option<PathBuf> {
 
 /// Resolve the database path: LMC_DB_PATH env > config db_path > platform default.
 pub fn resolve_db_path(config: &Config) -> PathBuf {
-    if let Ok(env_path) = env::var("LMC_DB_PATH") {
-        if !env_path.is_empty() {
-            return PathBuf::from(env_path);
-        }
+    if let Ok(env_path) = env::var("LMC_DB_PATH")
+        && !env_path.is_empty()
+    {
+        return PathBuf::from(env_path);
     }
     if !config.general.db_path.is_empty() {
         return PathBuf::from(&config.general.db_path);
