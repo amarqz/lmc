@@ -22,6 +22,7 @@ pub fn is_noisy(cmd: &str, config: &NoiseFilterConfig) -> bool {
 /// 2. Not in ignored list → not noisy
 /// 3. Sandwich rule: ignored command with meaningful commands both before AND after → not noisy
 /// 4. Otherwise → noisy
+#[allow(dead_code)]
 pub fn mark_noisy(commands: &[CommandRecord], config: &NoiseFilterConfig) -> Vec<bool> {
     if commands.is_empty() {
         return vec![];
@@ -82,6 +83,7 @@ pub fn mark_noisy(commands: &[CommandRecord], config: &NoiseFilterConfig) -> Vec
 }
 
 /// Re-evaluate noisy flags for all commands in a session using full context.
+#[allow(dead_code)]
 pub fn remark_session(
     db: &Database,
     session_id: &str,

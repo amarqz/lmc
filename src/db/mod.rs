@@ -39,6 +39,7 @@ impl Database {
         Ok(db)
     }
 
+    #[allow(dead_code)]
     pub fn open_in_memory() -> Result<Self> {
         let conn = Connection::open_in_memory()?;
         let db = Database { conn };
@@ -113,6 +114,7 @@ impl Database {
         Ok(self.conn.last_insert_rowid())
     }
 
+    #[allow(dead_code)]
     pub fn get_recent_commands(&self, limit: i64) -> Result<Vec<CommandRecord>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, cmd, timestamp, directory, exit_code, session_id, shell, noisy
@@ -226,6 +228,7 @@ impl Database {
         rows.collect()
     }
 
+    #[allow(dead_code)]
     pub fn get_session_commands(&self, session_id: &str) -> Result<Vec<CommandRecord>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, cmd, timestamp, directory, exit_code, session_id, shell, noisy
@@ -247,6 +250,7 @@ impl Database {
         rows.collect()
     }
 
+    #[allow(dead_code)]
     pub fn update_noisy_flag(&self, command_id: i64, noisy: bool) -> Result<()> {
         self.conn.execute(
             "UPDATE commands SET noisy = ?1 WHERE id = ?2",
