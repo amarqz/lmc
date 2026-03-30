@@ -122,13 +122,24 @@ fn run_tui(app: &mut App) -> Result<()> {
     enable_raw_mode()?;
     let result = run_tui_inner(app);
     let _ = disable_raw_mode();
-    let _ = crossterm::execute!(io::stdout(), crossterm::terminal::LeaveAlternateScreen);
 
     let copied_cmd = result?;
 
     if let Some(cmd) = copied_cmd {
+        use crossterm::{
+            execute,
+            style::{Color, Print, ResetColor, SetForegroundColor},
+        };
         match arboard::Clipboard::new().and_then(|mut c| c.set_text(&cmd)) {
-            Ok(_) => println!("Copied: {}", cmd),
+            Ok(_) => {
+                let _ = execute!(
+                    io::stdout(),
+                    SetForegroundColor(Color::Green),
+                    Print("Copied: "),
+                    ResetColor,
+                    Print(format!("{}\n", cmd)),
+                );
+            }
             Err(_) => {
                 eprintln!("Warning: clipboard not available.");
                 println!("{}", cmd);
@@ -141,17 +152,24 @@ fn run_tui(app: &mut App) -> Result<()> {
 
 fn run_tui_inner(app: &mut App) -> Result<Option<String>> {
     use crossterm::{
+        cursor::{MoveToColumn, MoveUp},
         event::{self, Event, KeyCode, KeyEventKind},
         execute,
-        terminal::EnterAlternateScreen,
+        terminal::{size as terminal_size, Clear, ClearType},
     };
-    use ratatui::{backend::CrosstermBackend, Terminal};
+    use ratatui::{backend::CrosstermBackend, Terminal, TerminalOptions, Viewport};
     use std::io;
 
-    let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen)?;
-    let backend = CrosstermBackend::new(stdout);
-    let mut terminal = Terminal::new(backend)?;
+    // title (3 lines) + one line per command + status bar (1 line)
+    let desired = (app.commands.len() + 4) as u16;
+    let max_height = terminal_size().map(|(_, rows)| rows.saturating_sub(2)).unwrap_or(20);
+    let height = desired.min(max_height);
+
+    let backend = CrosstermBackend::new(io::stdout());
+    let mut terminal = Terminal::with_options(
+        backend,
+        TerminalOptions { viewport: Viewport::Inline(height) },
+    )?;
 
     let copied_cmd: Option<String> = loop {
         terminal.draw(|frame| crate::ui::draw(frame, app))?;
@@ -183,7 +201,9 @@ fn run_tui_inner(app: &mut App) -> Result<Option<String>> {
         }
     };
 
-    terminal.show_cursor()?;
+    // Clear the inline area so the TUI disappears
+    let _ = execute!(io::stdout(), MoveUp(height), MoveToColumn(0), Clear(ClearType::FromCursorDown));
+
     Ok(copied_cmd)
 }
 
