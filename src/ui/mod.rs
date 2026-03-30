@@ -73,30 +73,46 @@ pub fn draw(frame: &mut Frame, app: &App) {
                 cmd.cmd.clone()
             };
 
-            let (line, style) = if i == app.selected {
-                (
+            let is_highlighted = i == app.selected;
+            let is_selected = app.selected_items.contains(&i);
+
+            let (line, style) = match (is_highlighted, is_selected) {
+                (true, true) => (
+                    // highlighted + selected: blue bullet + blue number
                     Line::from(vec![
-                        Span::styled("│ ", Style::default().fg(Color::Blue)),
-                        Span::styled(
-                            number_str,
-                            Style::default().fg(Color::Blue),
-                        ),
+                        Span::styled("● ", Style::default().fg(Color::Blue)),
+                        Span::styled(number_str, Style::default().fg(Color::Blue)),
                         Span::styled(display_cmd, Style::default()),
                     ]),
                     Style::default().bg(Color::Rgb(49, 50, 68)),
-                )
-            } else {
-                (
+                ),
+                (true, false) => (
+                    // highlighted only: blue bar + blue number
                     Line::from(vec![
-                        Span::raw("  "),
-                        Span::styled(
-                            number_str,
-                            Style::default().fg(Color::DarkGray),
-                        ),
+                        Span::styled("│ ", Style::default().fg(Color::Blue)),
+                        Span::styled(number_str, Style::default().fg(Color::Blue)),
+                        Span::styled(display_cmd, Style::default()),
+                    ]),
+                    Style::default().bg(Color::Rgb(49, 50, 68)),
+                ),
+                (false, true) => (
+                    // selected only: yellow bullet + normal number
+                    Line::from(vec![
+                        Span::styled("● ", Style::default().fg(Color::Yellow)),
+                        Span::styled(number_str, Style::default().fg(Color::DarkGray)),
                         Span::raw(display_cmd),
                     ]),
                     Style::default(),
-                )
+                ),
+                (false, false) => (
+                    // normal: empty gutter
+                    Line::from(vec![
+                        Span::raw("  "),
+                        Span::styled(number_str, Style::default().fg(Color::DarkGray)),
+                        Span::raw(display_cmd),
+                    ]),
+                    Style::default(),
+                ),
             };
             ListItem::new(line).style(style)
         })
@@ -110,7 +126,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
 
     // --- Status bar ---
     let status = Paragraph::new(Line::from(Span::styled(
-        "↑↓/jk navigate · Enter copy · 1–9 jump · q quit",
+        "↑↓/jk navigate · Enter copy · Space select · 1–9 jump · q quit",
         Style::default().fg(Color::DarkGray),
     )));
     frame.render_widget(status, chunks[2]);
