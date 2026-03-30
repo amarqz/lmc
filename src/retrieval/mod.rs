@@ -1,5 +1,6 @@
 use crate::db::{CommandRecord, Database};
 use anyhow::Result;
+use std::collections::HashSet;
 
 pub struct App {
     pub alias: String,
@@ -7,6 +8,7 @@ pub struct App {
     pub tags: Vec<String>,
     pub last_used: Option<i64>,
     pub selected: usize,
+    pub selected_items: HashSet<usize>,
 }
 
 impl App {
@@ -22,6 +24,7 @@ impl App {
             tags,
             last_used,
             selected: 0,
+            selected_items: HashSet::new(),
         }
     }
 
@@ -45,6 +48,14 @@ impl App {
             return;
         }
         self.selected = (self.selected + 1) % self.commands.len();
+    }
+
+    pub fn toggle_selection(&mut self) {
+        if self.selected_items.contains(&self.selected) {
+            self.selected_items.remove(&self.selected);
+        } else {
+            self.selected_items.insert(self.selected);
+        }
     }
 }
 
@@ -332,5 +343,46 @@ mod tests {
         let msg = alias_not_found_message("helm-dbg", &[]);
         assert!(msg.contains("helm-dbg"));
         assert!(msg.contains("lmc save"));
+    }
+
+    #[test]
+    fn test_selected_items_empty_at_start() {
+        let cmds = vec![make_cmd("a"), make_cmd("b")];
+        let app = App::new("x".to_string(), cmds, vec![], None);
+        assert!(app.selected_items.is_empty());
+    }
+
+    #[test]
+    fn test_toggle_selection_adds_item() {
+        let cmds = vec![make_cmd("a"), make_cmd("b")];
+        let mut app = App::new("x".to_string(), cmds, vec![], None);
+        app.toggle_selection();
+        assert!(app.selected_items.contains(&0));
+    }
+
+    #[test]
+    fn test_toggle_selection_removes_item() {
+        let cmds = vec![make_cmd("a"), make_cmd("b")];
+        let mut app = App::new("x".to_string(), cmds, vec![], None);
+        app.toggle_selection();
+        app.toggle_selection();
+        assert!(!app.selected_items.contains(&0));
+    }
+
+    #[test]
+    fn test_toggle_selection_multiple_items() {
+        let cmds = vec![make_cmd("a"), make_cmd("b"), make_cmd("c")];
+        let mut app = App::new("x".to_string(), cmds, vec![], None);
+        app.toggle_selection(); // select 0
+        app.move_down();
+        app.toggle_selection(); // select 1
+        app.move_down();
+        app.toggle_selection(); // select 2
+        app.move_up();
+        app.toggle_selection(); // deselect 1
+        assert!(app.selected_items.contains(&0));
+        assert!(!app.selected_items.contains(&1));
+        assert!(app.selected_items.contains(&2));
+        assert_eq!(app.selected_items.len(), 2);
     }
 }
