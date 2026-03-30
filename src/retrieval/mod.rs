@@ -134,26 +134,27 @@ fn run_tui(app: &mut App) -> Result<()> {
     let result = run_tui_inner(app);
     let _ = disable_raw_mode();
 
-    let copied_cmd = result?;
+    let copied_cmds = result?;
 
-    if let Some(cmd) = copied_cmd {
+    if let Some(cmds) = copied_cmds {
         use crossterm::{
             execute,
             style::{Color, Print, ResetColor, SetForegroundColor},
         };
-        match arboard::Clipboard::new().and_then(|mut c| c.set_text(&cmd)) {
+        let text = cmds.join("\n");
+        match arboard::Clipboard::new().and_then(|mut c| c.set_text(&text)) {
             Ok(_) => {
                 let _ = execute!(
                     io::stdout(),
                     SetForegroundColor(Color::Green),
-                    Print("Copied: "),
+                    Print(if cmds.len() == 1 { "Copied: " } else { "Copied:\n" }),
                     ResetColor,
-                    Print(format!("{}\n", cmd)),
+                    Print(format!("{}\n", text)),
                 );
             }
             Err(_) => {
                 eprintln!("Warning: clipboard not available.");
-                println!("{}", cmd);
+                println!("{}", text);
             }
         }
     }
@@ -161,7 +162,7 @@ fn run_tui(app: &mut App) -> Result<()> {
     Ok(())
 }
 
-fn run_tui_inner(app: &mut App) -> Result<Option<String>> {
+fn run_tui_inner(app: &mut App) -> Result<Option<Vec<String>>> {
     use crossterm::{
         cursor::{MoveToColumn, MoveUp},
         event::{self, Event, KeyCode, KeyEventKind},
@@ -182,7 +183,7 @@ fn run_tui_inner(app: &mut App) -> Result<Option<String>> {
         TerminalOptions { viewport: Viewport::Inline(height) },
     )?;
 
-    let copied_cmd: Option<String> = loop {
+    let copied_cmds: Option<Vec<String>> = loop {
         terminal.draw(|frame| crate::ui::draw(frame, app))?;
 
         if let Event::Key(key) = event::read()? {
@@ -193,16 +194,26 @@ fn run_tui_inner(app: &mut App) -> Result<Option<String>> {
                 KeyCode::Up | KeyCode::Char('k') => app.move_up(),
                 KeyCode::Down | KeyCode::Char('j') => app.move_down(),
                 KeyCode::Enter => {
-                    if let Some(cmd) = app.selected_command() {
-                        break Some(cmd.cmd.clone());
+                    if !app.selected_items.is_empty() {
+                        let mut selected: Vec<(usize, String)> = app
+                            .selected_items
+                            .iter()
+                            .filter_map(|&i| app.commands.get(i).map(|c| (i, c.cmd.clone())))
+                            .collect();
+                        selected.sort_by_key(|(i, _)| *i);
+                        let cmds: Vec<String> = selected.into_iter().map(|(_, c)| c).collect();
+                        break Some(cmds);
+                    } else if let Some(cmd) = app.selected_command() {
+                        break Some(vec![cmd.cmd.clone()]);
                     }
                 }
+                KeyCode::Char(' ') => app.toggle_selection(),
                 KeyCode::Char(c) if c.is_ascii_digit() && c != '0' => {
                     let idx = (c as u8 - b'1') as usize;
                     if idx < app.commands.len() {
                         app.selected = idx;
                         if let Some(cmd) = app.selected_command() {
-                            break Some(cmd.cmd.clone());
+                            break Some(vec![cmd.cmd.clone()]);
                         }
                     }
                 }
@@ -215,7 +226,7 @@ fn run_tui_inner(app: &mut App) -> Result<Option<String>> {
     // Clear the inline area so the TUI disappears
     let _ = execute!(io::stdout(), MoveUp(height), MoveToColumn(0), Clear(ClearType::FromCursorDown));
 
-    Ok(copied_cmd)
+    Ok(copied_cmds)
 }
 
 #[cfg(test)]
