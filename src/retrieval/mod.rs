@@ -125,11 +125,18 @@ pub fn run(alias: &str, db: &Database) -> Result<()> {
 
     let tags = db.get_tags_for_cluster(cluster_id)?;
     let mut app = App::new(alias.to_string(), commands, tags, cluster.last_used);
-
-    run_tui(&mut app)
+    let copied = run_tui(&mut app)?;
+    if copied {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+        let _ = db.update_cluster_last_used(cluster_id, now);
+    }
+    Ok(())
 }
 
-fn run_tui(app: &mut App) -> Result<()> {
+fn run_tui(app: &mut App) -> Result<bool> {
     use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
     use std::io;
 
@@ -160,9 +167,10 @@ fn run_tui(app: &mut App) -> Result<()> {
                 println!("{}", text);
             }
         }
+        Ok(true)
+    } else {
+        Ok(false)
     }
-
-    Ok(())
 }
 
 fn run_tui_inner(app: &mut App) -> Result<Option<Vec<String>>> {
