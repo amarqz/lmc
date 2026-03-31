@@ -395,6 +395,17 @@ impl Database {
         let rows = stmt.query_map(params![cluster_id], |row| row.get(0))?;
         rows.collect()
     }
+
+    pub fn get_command_count_for_cluster(&self, cluster_id: i64) -> Result<usize> {
+        let count: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM cluster_commands cc
+             JOIN commands c ON c.id = cc.command_id
+             WHERE cc.cluster_id = ?1 AND c.noisy = 0",
+            params![cluster_id],
+            |row| row.get(0),
+        )?;
+        Ok(count as usize)
+    }
 }
 
 #[cfg(test)]
@@ -969,5 +980,90 @@ mod tests {
         let all_cmds = db.get_recent_commands(10).unwrap();
         assert_eq!(all_cmds.len(), 1);
         assert_eq!(all_cmds[0].cmd, "cargo build");
+    }
+
+    #[test]
+    fn test_get_command_count_for_cluster() {
+        let db = Database::open_in_memory().unwrap();
+
+        let cmd_id = db.insert_command(&CommandRecord {
+            id: None,
+            cmd: "git status".to_string(),
+            timestamp: 1000,
+            directory: "/tmp".to_string(),
+            exit_code: Some(0),
+            session_id: "s1".to_string(),
+            shell: "zsh".to_string(),
+            noisy: false,
+        }).unwrap();
+
+        let cluster_id = db.insert_cluster(&Cluster {
+            id: None,
+            alias: None,
+            created_at: 1000,
+            last_used: None,
+            directory: None,
+            notes: None,
+        }).unwrap();
+        db.add_command_to_cluster(cluster_id, cmd_id, 0).unwrap();
+
+        let count = db.get_command_count_for_cluster(cluster_id).unwrap();
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn test_get_command_count_excludes_noisy() {
+        let db = Database::open_in_memory().unwrap();
+
+        let noisy_id = db.insert_command(&CommandRecord {
+            id: None,
+            cmd: "ls".to_string(),
+            timestamp: 1000,
+            directory: "/tmp".to_string(),
+            exit_code: Some(0),
+            session_id: "s1".to_string(),
+            shell: "zsh".to_string(),
+            noisy: true,
+        }).unwrap();
+
+        let real_id = db.insert_command(&CommandRecord {
+            id: None,
+            cmd: "git diff".to_string(),
+            timestamp: 1001,
+            directory: "/tmp".to_string(),
+            exit_code: Some(0),
+            session_id: "s1".to_string(),
+            shell: "zsh".to_string(),
+            noisy: false,
+        }).unwrap();
+
+        let cluster_id = db.insert_cluster(&Cluster {
+            id: None,
+            alias: None,
+            created_at: 1000,
+            last_used: None,
+            directory: None,
+            notes: None,
+        }).unwrap();
+        db.add_command_to_cluster(cluster_id, noisy_id, 0).unwrap();
+        db.add_command_to_cluster(cluster_id, real_id, 1).unwrap();
+
+        let count = db.get_command_count_for_cluster(cluster_id).unwrap();
+        assert_eq!(count, 1); // only non-noisy
+    }
+
+    #[test]
+    fn test_get_command_count_empty_cluster() {
+        let db = Database::open_in_memory().unwrap();
+        let cluster_id = db.insert_cluster(&Cluster {
+            id: None,
+            alias: None,
+            created_at: 1000,
+            last_used: None,
+            directory: None,
+            notes: None,
+        }).unwrap();
+        let count = db.get_command_count_for_cluster(cluster_id).unwrap();
+        assert_eq!(count, 0);
     }
 }
