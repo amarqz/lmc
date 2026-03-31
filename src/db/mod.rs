@@ -324,6 +324,14 @@ impl Database {
         Ok(())
     }
 
+    pub fn update_cluster_last_used(&self, cluster_id: i64, timestamp: i64) -> Result<()> {
+        self.conn.execute(
+            "UPDATE clusters SET last_used = ?1 WHERE id = ?2",
+            params![timestamp, cluster_id],
+        )?;
+        Ok(())
+    }
+
     pub fn delete_cluster(&self, cluster_id: i64) -> Result<()> {
         self.conn.execute(
             "DELETE FROM cluster_tags WHERE cluster_id = ?1",
@@ -1050,6 +1058,21 @@ mod tests {
 
         let count = db.get_command_count_for_cluster(cluster_id).unwrap();
         assert_eq!(count, 1); // only non-noisy
+    }
+
+    #[test]
+    fn test_update_cluster_last_used() {
+        let db = Database::open_in_memory().unwrap();
+        let cluster_id = db.insert_cluster(&Cluster {
+            id: None, alias: None, created_at: 1000, last_used: None,
+            directory: None, notes: None,
+        }).unwrap();
+
+        db.update_cluster_last_used(cluster_id, 9999).unwrap();
+
+        let clusters = db.get_all_clusters().unwrap();
+        let c = clusters.iter().find(|c| c.id == Some(cluster_id)).unwrap();
+        assert_eq!(c.last_used, Some(9999));
     }
 
     #[test]
