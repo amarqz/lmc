@@ -153,14 +153,14 @@ pub fn draw_index(frame: &mut Frame, app: &crate::index::IndexApp) {
     let gutter_w: usize = 2;
     let last_used_w: usize = 14;
     let cmds_w: usize = 4;
-    let gaps: usize = 3 * 2; // three 2-char gaps between columns
+    let gaps: usize = 4 * 2; // four 2-char gaps (after gutter, alias, last_used, cmds)
     let alias_w = terminal_width
         .saturating_sub(gutter_w + last_used_w + cmds_w + gaps)
         .saturating_sub(10) // leave space for tags
-        .max(15)
+        .max(1)
         .min(35);
     let tags_w = terminal_width
-        .saturating_sub(gutter_w + alias_w + last_used_w + cmds_w + gaps + 2);
+        .saturating_sub(gutter_w + alias_w + last_used_w + cmds_w + gaps);
 
     // --- Column headers ---
     let header = Line::from(vec![
