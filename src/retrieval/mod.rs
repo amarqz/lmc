@@ -51,6 +51,9 @@ impl App {
     }
 
     pub fn toggle_selection(&mut self) {
+        if self.commands.is_empty() {
+            return;
+        }
         if self.selected_items.contains(&self.selected) {
             self.selected_items.remove(&self.selected);
         } else {
@@ -395,5 +398,12 @@ mod tests {
         assert!(!app.selected_items.contains(&1));
         assert!(app.selected_items.contains(&2));
         assert_eq!(app.selected_items.len(), 2);
+    }
+
+    #[test]
+    fn test_toggle_selection_on_empty_does_nothing() {
+        let mut app = App::new("x".to_string(), vec![], vec![], None);
+        app.toggle_selection();
+        assert!(app.selected_items.is_empty());
     }
 }
