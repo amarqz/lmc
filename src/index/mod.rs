@@ -41,8 +41,103 @@ impl IndexApp {
     }
 }
 
-pub fn run(_db: &Database) -> Result<()> {
-    todo!()
+pub fn run(db: &Database) -> Result<()> {
+    let clusters = db.get_all_clusters()?;
+    let aliased: Vec<_> = clusters.into_iter().filter(|c| c.alias.is_some()).collect();
+
+    if aliased.is_empty() {
+        eprintln!(
+            "No aliases saved yet. Run `lmc save <alias>` to save your first cluster."
+        );
+        return Ok(());
+    }
+
+    let mut entries = Vec::new();
+    for cluster in &aliased {
+        let id = cluster.id.expect("cluster from DB always has id");
+        let tags = db.get_tags_for_cluster(id)?;
+        let command_count = db.get_command_count_for_cluster(id)?;
+        entries.push(IndexEntry {
+            alias: cluster.alias.clone().unwrap(),
+            last_used: cluster.last_used,
+            command_count,
+            tags,
+        });
+    }
+
+    let mut app = IndexApp::new(entries);
+    let selected_alias = run_tui(&mut app)?;
+
+    if let Some(alias) = selected_alias {
+        crate::retrieval::run(&alias, db)?;
+    }
+
+    Ok(())
+}
+
+fn run_tui(app: &mut IndexApp) -> Result<Option<String>> {
+    use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
+
+    enable_raw_mode()?;
+    let result = run_tui_inner(app);
+    let _ = disable_raw_mode();
+    result
+}
+
+fn run_tui_inner(app: &mut IndexApp) -> Result<Option<String>> {
+    use crossterm::{
+        cursor::{MoveToColumn, MoveUp},
+        event::{self, Event, KeyCode, KeyEventKind},
+        execute,
+        terminal::{size as terminal_size, Clear, ClearType},
+    };
+    use ratatui::{backend::CrosstermBackend, Terminal, TerminalOptions, Viewport};
+    use std::io;
+
+    // header (1) + entries + status bar (1) + 1 padding
+    let desired = (app.entries.len() + 3) as u16;
+    let max_height = terminal_size()
+        .map(|(_, rows)| rows.saturating_sub(2))
+        .unwrap_or(20);
+    let height = desired.min(max_height);
+
+    let backend = CrosstermBackend::new(io::stdout());
+    let mut terminal = Terminal::with_options(
+        backend,
+        TerminalOptions {
+            viewport: Viewport::Inline(height),
+        },
+    )?;
+
+    let result = loop {
+        terminal.draw(|frame| crate::ui::draw_index(frame, app))?;
+
+        if let Event::Key(key) = event::read()? {
+            if key.kind != KeyEventKind::Press {
+                continue;
+            }
+            match key.code {
+                KeyCode::Up | KeyCode::Char('k') => app.move_up(),
+                KeyCode::Down | KeyCode::Char('j') => app.move_down(),
+                KeyCode::Enter => {
+                    if let Some(entry) = app.selected_entry() {
+                        break Some(entry.alias.clone());
+                    }
+                }
+                KeyCode::Char('q') | KeyCode::Esc => break None,
+                _ => {}
+            }
+        }
+    };
+
+    let _ = execute!(
+        io::stdout(),
+        MoveUp(height),
+        MoveToColumn(0),
+        Clear(ClearType::FromCursorDown)
+    );
+
+    Ok(result)
 }
 
 #[cfg(test)]
@@ -113,5 +208,13 @@ mod tests {
         app.move_up();
         app.move_down();
         assert_eq!(app.selected, 0);
+    }
+
+    #[test]
+    fn test_run_empty_db_returns_ok() {
+        let db = crate::db::Database::open_in_memory().unwrap();
+        // No clusters in DB — run should return Ok without launching TUI
+        let result = run(&db);
+        assert!(result.is_ok());
     }
 }
