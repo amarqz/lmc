@@ -100,7 +100,17 @@ fn main() {
                     }
                 }
                 None => {
-                    println!("TODO: show index of all saved aliases");
+                    let db = match db::Database::open(&db_path) {
+                        Ok(d) => d,
+                        Err(e) => {
+                            eprintln!("Error opening database: {e}");
+                            std::process::exit(1);
+                        }
+                    };
+                    if let Err(e) = index::run(&db) {
+                        eprintln!("Error: {e}");
+                        std::process::exit(1);
+                    }
                 }
             }
         }
