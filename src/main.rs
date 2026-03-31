@@ -3,6 +3,7 @@ mod cluster;
 mod config;
 mod db;
 mod filter;
+mod index;
 mod retrieval;
 mod save;
 mod shell;
