@@ -131,7 +131,9 @@ pub fn run(alias: &str, db: &Database) -> Result<()> {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs() as i64;
-        let _ = db.update_cluster_last_used(cluster_id, now);
+        if let Err(e) = db.update_cluster_last_used(cluster_id, now) {
+            eprintln!("Warning: could not update last_used: {e}");
+        }
     }
     Ok(())
 }
