@@ -6,6 +6,7 @@ mod filter;
 mod index;
 mod retrieval;
 mod save;
+mod search;
 mod shell;
 mod tags;
 mod ui;
