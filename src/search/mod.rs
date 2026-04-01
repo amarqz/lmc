@@ -25,6 +25,8 @@ pub fn score_clusters(query: &str, clusters: &[ClusterData], now_secs: i64) -> V
     let matcher = SkimMatcherV2::default();
     const RECENCY_BONUS_MAX: i64 = 50;
     const WEEK_SECS: i64 = 7 * 24 * 3600;
+    // Minimum fuzzy score per query character to reject scattered low-quality matches
+    let min_score = query.len() as i64 * 8;
 
     let mut results: Vec<SearchResult> = clusters
         .iter()
@@ -37,6 +39,9 @@ pub fn score_clusters(query: &str, clusters: &[ClusterData], now_secs: i64) -> V
                 c.directory.as_deref().unwrap_or(""),
             );
             let fuzzy_score = matcher.fuzzy_match(&searchable, query)?;
+            if fuzzy_score < min_score {
+                return None;
+            }
             let recency_bonus = c.last_used.map_or(0, |lu| {
                 let age_secs = now_secs.saturating_sub(lu);
                 let weeks_old = age_secs / WEEK_SECS;
