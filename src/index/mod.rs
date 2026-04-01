@@ -75,7 +75,7 @@ pub fn run(db: &Database) -> Result<()> {
     Ok(())
 }
 
-fn run_tui(app: &mut IndexApp) -> Result<Option<String>> {
+pub fn run_tui(app: &mut IndexApp) -> Result<Option<String>> {
     use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 
     enable_raw_mode()?;
