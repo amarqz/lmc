@@ -10,7 +10,7 @@ pub struct Cli {
     pub query: Option<String>,
 
     /// Filter index by tag (repeatable; default AND logic)
-    #[arg(short = 't', long = "tag", action = clap::ArgAction::Append)]
+    #[arg(short = 't', long = "tag", action = clap::ArgAction::Append, value_name = "TAG")]
     pub tags: Vec<String>,
 
     /// When multiple --tag flags are given, match clusters with ANY tag instead of ALL
