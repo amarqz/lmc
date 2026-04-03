@@ -112,7 +112,7 @@ fn main() {
                             std::process::exit(1);
                         }
                     };
-                    if let Err(e) = index::run(&db) {
+                    if let Err(e) = index::run(&db, &cli.tags, !cli.any) {
                         eprintln!("Error: {e}");
                         std::process::exit(1);
                     }
