@@ -28,6 +28,10 @@ pub enum Command {
         /// Save a specific cluster by ID instead of the most recent
         #[arg(long)]
         from: Option<i64>,
+
+        /// Open the refinement UI before saving
+        #[arg(short = 'r', long)]
+        refine: bool,
     },
 
     /// Generate shell hook for integration

@@ -27,9 +27,12 @@ fn main() {
     let cli = Cli::parse();
 
     match cli.command {
-        Some(Command::Save { alias, from }) => {
+        Some(Command::Save { alias, from, refine }) => {
             if from.is_some() {
                 eprintln!("Warning: --from is not yet implemented; saving the most recent cluster.");
+            }
+            if refine {
+                eprintln!("Warning: --refine is not yet implemented; proceeding with save.");
             }
             let db = match db::Database::open(&db_path) {
                 Ok(d) => d,

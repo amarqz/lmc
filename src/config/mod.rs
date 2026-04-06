@@ -30,13 +30,13 @@ pub struct NoiseFilterConfig {
     pub ignored_commands: Vec<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct TagInferenceMapping {
     pub tools: Vec<String>,
     pub tags: Vec<String>,
 }
 
-#[derive(Debug, Default, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq)]
 pub struct TagInferenceConfig {
     #[serde(default)]
     pub custom: Vec<TagInferenceMapping>,
