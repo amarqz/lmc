@@ -4,6 +4,7 @@ mod config;
 mod db;
 mod filter;
 mod index;
+mod refine;
 mod retrieval;
 mod save;
 mod search;
