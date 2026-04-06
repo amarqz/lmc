@@ -246,17 +246,19 @@ impl Database {
     }
 
     pub fn replace_cluster_commands(&self, cluster_id: i64, commands: &[CommandRecord]) -> Result<()> {
-        self.conn.execute(
+        let tx = self.conn.unchecked_transaction()?;
+        tx.execute(
             "DELETE FROM cluster_commands WHERE cluster_id = ?1",
             params![cluster_id],
         )?;
         for (pos, cmd) in commands.iter().enumerate() {
             let cmd_id = cmd.id.expect("command must have an id to be re-linked");
-            self.conn.execute(
+            tx.execute(
                 "INSERT INTO cluster_commands (cluster_id, command_id, position) VALUES (?1, ?2, ?3)",
                 params![cluster_id, cmd_id, pos as i32],
             )?;
         }
+        tx.commit()?;
         Ok(())
     }
 
@@ -1307,7 +1309,7 @@ mod tests {
     }
 
     #[test]
-    fn test_replace_cluster_commands_preserves_positions() {
+    fn test_replace_cluster_commands_single_item_survives() {
         let db = Database::open_in_memory().unwrap();
 
         let cluster_id = db.insert_cluster(&Cluster {
@@ -1339,5 +1341,27 @@ mod tests {
         let result = db.get_commands_for_cluster(cluster_id).unwrap();
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].cmd, "b");
+    }
+
+    #[test]
+    fn test_replace_cluster_commands_empty_list() {
+        let db = Database::open_in_memory().unwrap();
+
+        let cluster_id = db.insert_cluster(&Cluster {
+            id: None, alias: None, created_at: 1000, last_used: None,
+            directory: Some("/p".to_string()), notes: None,
+        }).unwrap();
+
+        let id1 = db.insert_command(&CommandRecord {
+            id: None, cmd: "a".to_string(), timestamp: 1000,
+            directory: "/p".to_string(), exit_code: Some(0),
+            session_id: "s1".to_string(), shell: "zsh".to_string(), noisy: false,
+        }).unwrap();
+
+        db.add_command_to_cluster(cluster_id, id1, 0).unwrap();
+        db.replace_cluster_commands(cluster_id, &[]).unwrap();
+
+        let result = db.get_commands_for_cluster(cluster_id).unwrap();
+        assert!(result.is_empty());
     }
 }
