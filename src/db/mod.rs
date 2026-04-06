@@ -245,6 +245,21 @@ impl Database {
         Ok(())
     }
 
+    pub fn replace_cluster_commands(&self, cluster_id: i64, commands: &[CommandRecord]) -> Result<()> {
+        self.conn.execute(
+            "DELETE FROM cluster_commands WHERE cluster_id = ?1",
+            params![cluster_id],
+        )?;
+        for (pos, cmd) in commands.iter().enumerate() {
+            let cmd_id = cmd.id.expect("command must have an id to be re-linked");
+            self.conn.execute(
+                "INSERT INTO cluster_commands (cluster_id, command_id, position) VALUES (?1, ?2, ?3)",
+                params![cluster_id, cmd_id, pos as i32],
+            )?;
+        }
+        Ok(())
+    }
+
     pub fn get_commands_for_cluster(&self, cluster_id: i64) -> Result<Vec<CommandRecord>> {
         let mut stmt = self.conn.prepare(
             "SELECT c.id, c.cmd, c.timestamp, c.directory, c.exit_code, c.session_id, c.shell, c.noisy
@@ -1243,5 +1258,86 @@ mod tests {
 
         let results = db.get_clusters_by_tags(&["docker".to_string()], true).unwrap();
         assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_replace_cluster_commands_updates_list() {
+        let db = Database::open_in_memory().unwrap();
+
+        let cluster_id = db.insert_cluster(&Cluster {
+            id: None, alias: None, created_at: 1000, last_used: None,
+            directory: Some("/p".to_string()), notes: None,
+        }).unwrap();
+
+        let id1 = db.insert_command(&CommandRecord {
+            id: None, cmd: "cmd1".to_string(), timestamp: 1000,
+            directory: "/p".to_string(), exit_code: Some(0),
+            session_id: "s1".to_string(), shell: "zsh".to_string(), noisy: false,
+        }).unwrap();
+        let id2 = db.insert_command(&CommandRecord {
+            id: None, cmd: "cmd2".to_string(), timestamp: 1010,
+            directory: "/p".to_string(), exit_code: Some(0),
+            session_id: "s1".to_string(), shell: "zsh".to_string(), noisy: false,
+        }).unwrap();
+        let id3 = db.insert_command(&CommandRecord {
+            id: None, cmd: "cmd3".to_string(), timestamp: 1020,
+            directory: "/p".to_string(), exit_code: Some(0),
+            session_id: "s1".to_string(), shell: "zsh".to_string(), noisy: false,
+        }).unwrap();
+
+        db.add_command_to_cluster(cluster_id, id1, 0).unwrap();
+        db.add_command_to_cluster(cluster_id, id2, 1).unwrap();
+        db.add_command_to_cluster(cluster_id, id3, 2).unwrap();
+
+        // Replace with only cmd1 and cmd3 (simulating cmd2 deleted)
+        let keep = vec![
+            CommandRecord { id: Some(id1), cmd: "cmd1".to_string(), timestamp: 1000,
+                directory: "/p".to_string(), exit_code: Some(0),
+                session_id: "s1".to_string(), shell: "zsh".to_string(), noisy: false },
+            CommandRecord { id: Some(id3), cmd: "cmd3".to_string(), timestamp: 1020,
+                directory: "/p".to_string(), exit_code: Some(0),
+                session_id: "s1".to_string(), shell: "zsh".to_string(), noisy: false },
+        ];
+        db.replace_cluster_commands(cluster_id, &keep).unwrap();
+
+        let result = db.get_commands_for_cluster(cluster_id).unwrap();
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].cmd, "cmd1");
+        assert_eq!(result[1].cmd, "cmd3");
+    }
+
+    #[test]
+    fn test_replace_cluster_commands_preserves_positions() {
+        let db = Database::open_in_memory().unwrap();
+
+        let cluster_id = db.insert_cluster(&Cluster {
+            id: None, alias: None, created_at: 1000, last_used: None,
+            directory: Some("/p".to_string()), notes: None,
+        }).unwrap();
+
+        let id1 = db.insert_command(&CommandRecord {
+            id: None, cmd: "a".to_string(), timestamp: 1000,
+            directory: "/p".to_string(), exit_code: Some(0),
+            session_id: "s1".to_string(), shell: "zsh".to_string(), noisy: false,
+        }).unwrap();
+        let id2 = db.insert_command(&CommandRecord {
+            id: None, cmd: "b".to_string(), timestamp: 1010,
+            directory: "/p".to_string(), exit_code: Some(0),
+            session_id: "s1".to_string(), shell: "zsh".to_string(), noisy: false,
+        }).unwrap();
+
+        db.add_command_to_cluster(cluster_id, id1, 0).unwrap();
+        db.add_command_to_cluster(cluster_id, id2, 1).unwrap();
+
+        let keep = vec![
+            CommandRecord { id: Some(id2), cmd: "b".to_string(), timestamp: 1010,
+                directory: "/p".to_string(), exit_code: Some(0),
+                session_id: "s1".to_string(), shell: "zsh".to_string(), noisy: false },
+        ];
+        db.replace_cluster_commands(cluster_id, &keep).unwrap();
+
+        let result = db.get_commands_for_cluster(cluster_id).unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].cmd, "b");
     }
 }
