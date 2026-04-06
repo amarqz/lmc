@@ -109,6 +109,85 @@ impl RefineApp {
     }
 }
 
+pub fn run(
+    alias: &str,
+    commands: Vec<CommandRecord>,
+    config: TagInferenceConfig,
+) -> anyhow::Result<RefineResult> {
+    use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
+
+    let mut app = RefineApp::new(alias.to_string(), commands, config);
+    enable_raw_mode()?;
+    let result = run_tui_inner(&mut app);
+    let _ = disable_raw_mode();
+    result
+}
+
+fn run_tui_inner(app: &mut RefineApp) -> anyhow::Result<RefineResult> {
+    use crossterm::{
+        cursor::{MoveToColumn, MoveUp},
+        event::{self, Event, KeyCode, KeyEventKind},
+        execute,
+        terminal::{size as terminal_size, Clear, ClearType},
+    };
+    use ratatui::{backend::CrosstermBackend, Terminal, TerminalOptions, Viewport};
+    use std::io;
+
+    // title(1) + blank(1) + commands + tags(1) + status(1) = commands.len() + 4
+    let desired = (app.commands.len() + 4) as u16;
+    let max_height = terminal_size()
+        .map(|(_, rows)| rows.saturating_sub(2))
+        .unwrap_or(20);
+    let height = desired.min(max_height);
+
+    let backend = CrosstermBackend::new(io::stdout());
+    let mut terminal = Terminal::with_options(
+        backend,
+        TerminalOptions {
+            viewport: Viewport::Inline(height),
+        },
+    )?;
+
+    let result = loop {
+        terminal.draw(|frame| crate::ui::draw_refine(frame, app))?;
+
+        if let Event::Key(key) = event::read()? {
+            if key.kind != KeyEventKind::Press {
+                continue;
+            }
+            match key.code {
+                KeyCode::Up | KeyCode::Char('k') => app.move_up(),
+                KeyCode::Down | KeyCode::Char('j') => app.move_down(),
+                KeyCode::Char('d') => app.delete_selected(),
+                KeyCode::Char('u') => app.undo(),
+                KeyCode::Char('s') => {
+                    if let Some((top, bottom)) = app.split() {
+                        break RefineResult::Split(top, bottom);
+                    }
+                    // selected == 0: no-op, stay in loop
+                }
+                KeyCode::Enter => {
+                    if app.can_confirm() {
+                        break RefineResult::Confirmed(app.commands.clone());
+                    }
+                    // empty list: no-op
+                }
+                KeyCode::Char('q') | KeyCode::Esc => break RefineResult::Cancelled,
+                _ => {}
+            }
+        }
+    };
+
+    let _ = execute!(
+        io::stdout(),
+        MoveUp(height),
+        MoveToColumn(0),
+        Clear(ClearType::FromCursorDown)
+    );
+
+    Ok(result)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
