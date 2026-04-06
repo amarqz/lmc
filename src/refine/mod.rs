@@ -15,7 +15,7 @@ pub struct RefineApp {
     pub commands: Vec<CommandRecord>,
     pub selected: usize,
     pub tags: Vec<String>,
-    undo_stack: Vec<Vec<CommandRecord>>,
+    undo_stack: Vec<(Vec<CommandRecord>, usize)>,
     config: TagInferenceConfig,
 }
 
@@ -77,20 +77,18 @@ impl RefineApp {
         if self.commands.is_empty() {
             return;
         }
-        self.undo_stack.push(self.commands.clone());
+        self.undo_stack.push((self.commands.clone(), self.selected));
         self.commands.remove(self.selected);
-        if self.selected > 0 && self.selected >= self.commands.len() {
-            self.selected = self.commands.len().saturating_sub(1);
+        if self.selected >= self.commands.len() && !self.commands.is_empty() {
+            self.selected = self.commands.len() - 1;
         }
         self.tags = Self::compute_tags(&self.commands, &self.config);
     }
 
     pub fn undo(&mut self) {
-        if let Some(prev) = self.undo_stack.pop() {
-            self.commands = prev;
-            if self.selected >= self.commands.len() && !self.commands.is_empty() {
-                self.selected = self.commands.len() - 1;
-            }
+        if let Some((prev_commands, prev_selected)) = self.undo_stack.pop() {
+            self.commands = prev_commands;
+            self.selected = prev_selected;
             self.tags = Self::compute_tags(&self.commands, &self.config);
         }
     }
@@ -303,5 +301,10 @@ mod tests {
     fn test_should_not_refine_exactly_threshold() {
         let cmds: Vec<_> = (1..=10).map(|i| make_cmd(i, "cmd", "/p")).collect();
         assert!(!should_refine(&cmds, false));
+    }
+
+    #[test]
+    fn test_should_not_refine_empty_commands() {
+        assert!(!should_refine(&[], false));
     }
 }
