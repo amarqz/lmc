@@ -6,6 +6,7 @@ mod filter;
 mod index;
 mod retrieval;
 mod save;
+mod search;
 mod shell;
 mod tags;
 mod ui;
@@ -94,7 +95,11 @@ fn main() {
                             std::process::exit(1);
                         }
                     };
-                    if let Err(e) = retrieval::run(&query, &db) {
+                    let result = match db.get_cluster_by_alias(&query) {
+                        Ok(Some(_)) => retrieval::run(&query, &db),
+                        _ => search::run(&query, &db),
+                    };
+                    if let Err(e) = result {
                         eprintln!("Error: {e}");
                         std::process::exit(1);
                     }
@@ -107,7 +112,7 @@ fn main() {
                             std::process::exit(1);
                         }
                     };
-                    if let Err(e) = index::run(&db) {
+                    if let Err(e) = index::run(&db, &cli.tags, !cli.any) {
                         eprintln!("Error: {e}");
                         std::process::exit(1);
                     }

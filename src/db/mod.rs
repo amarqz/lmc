@@ -190,6 +190,47 @@ impl Database {
         rows.collect()
     }
 
+    pub fn get_clusters_by_tags(&self, tags: &[String], require_all: bool) -> Result<Vec<Cluster>> {
+        if tags.is_empty() {
+            return self.get_all_clusters();
+        }
+        let placeholders = (0..tags.len()).map(|_| "?").collect::<Vec<_>>().join(", ");
+        let sql = if require_all {
+            format!(
+                "SELECT c.id, c.alias, c.created_at, c.last_used, c.directory, c.notes
+                 FROM clusters c
+                 JOIN cluster_tags ct ON c.id = ct.cluster_id
+                 WHERE ct.tag IN ({})
+                 GROUP BY c.id
+                 HAVING COUNT(DISTINCT ct.tag) = {}
+                 ORDER BY c.last_used DESC NULLS LAST, c.created_at DESC",
+                placeholders,
+                tags.len()
+            )
+        } else {
+            format!(
+                "SELECT DISTINCT c.id, c.alias, c.created_at, c.last_used, c.directory, c.notes
+                 FROM clusters c
+                 JOIN cluster_tags ct ON c.id = ct.cluster_id
+                 WHERE ct.tag IN ({})
+                 ORDER BY c.last_used DESC NULLS LAST, c.created_at DESC",
+                placeholders
+            )
+        };
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows = stmt.query_map(rusqlite::params_from_iter(tags.iter()), |row| {
+            Ok(Cluster {
+                id: Some(row.get(0)?),
+                alias: row.get(1)?,
+                created_at: row.get(2)?,
+                last_used: row.get(3)?,
+                directory: row.get(4)?,
+                notes: row.get(5)?,
+            })
+        })?;
+        rows.collect()
+    }
+
     pub fn add_command_to_cluster(
         &self,
         cluster_id: i64,
@@ -1088,5 +1129,119 @@ mod tests {
         }).unwrap();
         let count = db.get_command_count_for_cluster(cluster_id).unwrap();
         assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn test_get_clusters_by_tags_and_returns_only_full_match() {
+        let db = Database::open_in_memory().unwrap();
+
+        // cluster with both kubernetes + helm
+        let c1 = db.insert_cluster(&Cluster {
+            id: None,
+            alias: Some("kube-debug".to_string()),
+            created_at: 1000,
+            last_used: Some(2000),
+            directory: None,
+            notes: None,
+        }).unwrap();
+        db.add_tag_to_cluster(c1, "kubernetes").unwrap();
+        db.add_tag_to_cluster(c1, "helm").unwrap();
+
+        // cluster with only kubernetes
+        let c2 = db.insert_cluster(&Cluster {
+            id: None,
+            alias: Some("kube-only".to_string()),
+            created_at: 1000,
+            last_used: Some(1000),
+            directory: None,
+            notes: None,
+        }).unwrap();
+        db.add_tag_to_cluster(c2, "kubernetes").unwrap();
+
+        let results = db.get_clusters_by_tags(
+            &["kubernetes".to_string(), "helm".to_string()],
+            true,
+        ).unwrap();
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].alias, Some("kube-debug".to_string()));
+    }
+
+    #[test]
+    fn test_get_clusters_by_tags_or_returns_any_match() {
+        let db = Database::open_in_memory().unwrap();
+
+        let c1 = db.insert_cluster(&Cluster {
+            id: None,
+            alias: Some("kube-debug".to_string()),
+            created_at: 1000,
+            last_used: Some(3000),
+            directory: None,
+            notes: None,
+        }).unwrap();
+        db.add_tag_to_cluster(c1, "kubernetes").unwrap();
+
+        let c2 = db.insert_cluster(&Cluster {
+            id: None,
+            alias: Some("helm-release".to_string()),
+            created_at: 1000,
+            last_used: Some(2000),
+            directory: None,
+            notes: None,
+        }).unwrap();
+        db.add_tag_to_cluster(c2, "helm").unwrap();
+
+        let c3 = db.insert_cluster(&Cluster {
+            id: None,
+            alias: Some("docker-build".to_string()),
+            created_at: 1000,
+            last_used: Some(1000),
+            directory: None,
+            notes: None,
+        }).unwrap();
+        db.add_tag_to_cluster(c3, "docker").unwrap();
+
+        let results = db.get_clusters_by_tags(
+            &["kubernetes".to_string(), "helm".to_string()],
+            false,
+        ).unwrap();
+
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].alias, Some("kube-debug".to_string()));
+        assert_eq!(results[1].alias, Some("helm-release".to_string()));
+    }
+
+    #[test]
+    fn test_get_clusters_by_tags_empty_returns_all() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_cluster(&Cluster {
+            id: None,
+            alias: Some("a".to_string()),
+            created_at: 1000,
+            last_used: None,
+            directory: None,
+            notes: None,
+        }).unwrap();
+
+        let result_all = db.get_all_clusters().unwrap();
+        let result_tags = db.get_clusters_by_tags(&[], true).unwrap();
+        assert_eq!(result_all.len(), result_tags.len());
+    }
+
+    #[test]
+    fn test_get_clusters_by_tags_no_match_returns_empty() {
+        let db = Database::open_in_memory().unwrap();
+        let c1 = db.insert_cluster(&Cluster {
+            id: None,
+            alias: Some("kube-debug".to_string()),
+            created_at: 1000,
+            last_used: Some(1000),
+            directory: None,
+            notes: None,
+        }).unwrap();
+        db.add_tag_to_cluster(c1, "kubernetes").unwrap();
+
+        let results = db.get_clusters_by_tags(&["docker".to_string()], true).unwrap();
+        assert!(results.is_empty());
     }
 }

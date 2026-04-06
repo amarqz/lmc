@@ -41,14 +41,23 @@ impl IndexApp {
     }
 }
 
-pub fn run(db: &Database) -> Result<()> {
-    let clusters = db.get_all_clusters()?;
+pub fn run(db: &Database, tags: &[String], require_all: bool) -> Result<()> {
+    let clusters = if tags.is_empty() {
+        db.get_all_clusters()?
+    } else {
+        db.get_clusters_by_tags(tags, require_all)?
+    };
     let aliased: Vec<_> = clusters.into_iter().filter(|c| c.alias.is_some()).collect();
 
     if aliased.is_empty() {
-        eprintln!(
-            "No aliases saved yet. Run `lmc save <alias>` to save your first cluster."
-        );
+        if tags.is_empty() {
+            eprintln!(
+                "No aliases saved yet. Run `lmc save <alias>` to save your first cluster."
+            );
+        } else {
+            let tag_list = tags.join(", ");
+            eprintln!("No aliases found matching tag(s): {tag_list}");
+        }
         return Ok(());
     }
 
@@ -75,7 +84,7 @@ pub fn run(db: &Database) -> Result<()> {
     Ok(())
 }
 
-fn run_tui(app: &mut IndexApp) -> Result<Option<String>> {
+pub fn run_tui(app: &mut IndexApp) -> Result<Option<String>> {
     use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 
     enable_raw_mode()?;
@@ -211,10 +220,17 @@ mod tests {
     }
 
     #[test]
+    fn test_run_with_nonmatching_tags_returns_ok() {
+        let db = crate::db::Database::open_in_memory().unwrap();
+        let result = run(&db, &["nonexistent".to_string()], true);
+        assert!(result.is_ok());
+    }
+
+    #[test]
     fn test_run_empty_db_returns_ok() {
         let db = crate::db::Database::open_in_memory().unwrap();
         // No clusters in DB — run should return Ok without launching TUI
-        let result = run(&db);
+        let result = run(&db, &[], true);
         assert!(result.is_ok());
     }
 }
