@@ -32,9 +32,6 @@ fn main() {
             if from.is_some() {
                 eprintln!("Warning: --from is not yet implemented; saving the most recent cluster.");
             }
-            if refine {
-                eprintln!("Warning: --refine is not yet implemented; proceeding with save.");
-            }
             let db = match db::Database::open(&db_path) {
                 Ok(d) => d,
                 Err(e) => {
@@ -42,7 +39,7 @@ fn main() {
                     std::process::exit(1);
                 }
             };
-            if let Err(e) = save::run(&alias, &db) {
+            if let Err(e) = save::run(&alias, refine, &db, &cfg.tag_inference) {
                 eprintln!("Error saving cluster: {e}");
                 std::process::exit(1);
             }
