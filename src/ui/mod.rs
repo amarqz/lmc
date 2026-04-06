@@ -59,7 +59,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
         .map(|(i, cmd)| {
             let number_str = format!("{}  ", i + 1);
             // Truncate command if it would overflow terminal width
-            let prefix_len = 4 + number_str.len(); // 2-char gutter + space + number
+            let prefix_len = 4 + number_str.len(); // 2-char gutter + 2-char space before number
             let max_cmd_len = terminal_width.saturating_sub(prefix_len);
             let display_cmd = if cmd.cmd.chars().count() > max_cmd_len && max_cmd_len > 3 {
                 let truncate_at = max_cmd_len - 1;
@@ -285,18 +285,7 @@ pub fn draw_refine(frame: &mut Frame, app: &crate::refine::RefineApp) {
             let number_str = format!("{}  ", i + 1);
             let prefix_len = 4 + number_str.len();
             let max_cmd_len = terminal_width.saturating_sub(prefix_len);
-            let display_cmd = if cmd.cmd.chars().count() > max_cmd_len && max_cmd_len > 3 {
-                let truncate_at = max_cmd_len - 1;
-                let byte_pos = cmd
-                    .cmd
-                    .char_indices()
-                    .nth(truncate_at)
-                    .map(|(i, _)| i)
-                    .unwrap_or(cmd.cmd.len());
-                format!("{}…", &cmd.cmd[..byte_pos])
-            } else {
-                cmd.cmd.clone()
-            };
+            let display_cmd = truncate_str(&cmd.cmd, max_cmd_len);
 
             let is_highlighted = i == app.selected;
             let (line, style) = if is_highlighted {
