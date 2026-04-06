@@ -134,6 +134,9 @@ fn run_tui_inner(app: &mut RefineApp) -> anyhow::Result<RefineResult> {
     use std::io;
 
     // title(1) + blank(1) + commands + tags(1) + status(1) = commands.len() + 4
+    // Height is fixed at TUI start. Deleting commands leaves blank lines at the
+    // bottom, and the cleanup MoveUp uses this initial height. Same trade-off as
+    // retrieval::run_tui_inner — acceptable for inline viewports.
     let desired = (app.commands.len() + 4) as u16;
     let max_height = terminal_size()
         .map(|(_, rows)| rows.saturating_sub(2))
