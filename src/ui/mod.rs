@@ -251,6 +251,111 @@ pub fn draw_index(frame: &mut Frame, app: &crate::index::IndexApp) {
     frame.render_widget(status, chunks[2]);
 }
 
+pub fn draw_refine(frame: &mut Frame, app: &crate::refine::RefineApp) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1), // alias title
+            Constraint::Length(1), // blank separator
+            Constraint::Min(1),    // command list
+            Constraint::Length(1), // tags line
+            Constraint::Length(1), // status bar
+        ])
+        .split(frame.area());
+
+    // Title
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            app.alias.clone(),
+            Style::default().fg(Color::Blue).add_modifier(Modifier::BOLD),
+        )))
+        .block(Block::default().borders(Borders::NONE)),
+        chunks[0],
+    );
+
+    // chunks[1] is blank — nothing rendered
+
+    // Command list
+    let terminal_width = chunks[2].width as usize;
+    let items: Vec<ListItem> = app
+        .commands
+        .iter()
+        .enumerate()
+        .map(|(i, cmd)| {
+            let number_str = format!("{}  ", i + 1);
+            let prefix_len = 4 + number_str.len();
+            let max_cmd_len = terminal_width.saturating_sub(prefix_len);
+            let display_cmd = if cmd.cmd.chars().count() > max_cmd_len && max_cmd_len > 3 {
+                let truncate_at = max_cmd_len - 1;
+                let byte_pos = cmd
+                    .cmd
+                    .char_indices()
+                    .nth(truncate_at)
+                    .map(|(i, _)| i)
+                    .unwrap_or(cmd.cmd.len());
+                format!("{}…", &cmd.cmd[..byte_pos])
+            } else {
+                cmd.cmd.clone()
+            };
+
+            let is_highlighted = i == app.selected;
+            let (line, style) = if is_highlighted {
+                (
+                    Line::from(vec![
+                        Span::styled("│ ", Style::default().fg(Color::Blue)),
+                        Span::styled(number_str, Style::default().fg(Color::Blue)),
+                        Span::styled(display_cmd, Style::default()),
+                    ]),
+                    Style::default().bg(Color::Rgb(49, 50, 68)),
+                )
+            } else {
+                (
+                    Line::from(vec![
+                        Span::raw("  "),
+                        Span::styled(number_str, Style::default().fg(Color::DarkGray)),
+                        Span::raw(display_cmd),
+                    ]),
+                    Style::default(),
+                )
+            };
+            ListItem::new(line).style(style)
+        })
+        .collect();
+
+    let mut list_state = ListState::default();
+    list_state.select(Some(app.selected));
+    let list = List::new(items).block(Block::default().borders(Borders::NONE));
+    frame.render_stateful_widget(list, chunks[2], &mut list_state);
+
+    // Tags line
+    let tags_text = if app.tags.is_empty() {
+        "tags: none".to_string()
+    } else {
+        format!("tags: {}", app.tags.join(", "))
+    };
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            tags_text,
+            Style::default().fg(Color::DarkGray),
+        ))),
+        chunks[3],
+    );
+
+    // Status bar — hint changes when no commands remain
+    let status_msg = if !app.can_confirm() {
+        "no commands left · u undo · q quit"
+    } else {
+        "↑↓/jk navigate · d delete · s split · u undo · Enter confirm · q quit"
+    };
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            status_msg,
+            Style::default().fg(Color::DarkGray),
+        ))),
+        chunks[4],
+    );
+}
+
 fn truncate_str(s: &str, max_width: usize) -> String {
     if max_width == 0 {
         return String::new();
