@@ -30,13 +30,13 @@ pub struct NoiseFilterConfig {
     pub ignored_commands: Vec<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct TagInferenceMapping {
     pub tools: Vec<String>,
     pub tags: Vec<String>,
 }
 
-#[derive(Debug, Default, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq)]
 pub struct TagInferenceConfig {
     #[serde(default)]
     pub custom: Vec<TagInferenceMapping>,
@@ -145,7 +145,11 @@ pub fn load_config() -> Result<Config, Box<dyn std::error::Error>> {
 mod tests {
     use super::*;
     use std::io::Write;
+    use std::sync::Mutex;
     use tempfile::NamedTempFile;
+
+    // Serialize all tests that read or write LMC_DB_PATH to prevent env-var races.
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn test_default_config() {
@@ -216,6 +220,7 @@ cluster_gap_minutes = 10
 
     #[test]
     fn test_resolve_db_path_env_override() {
+        let _guard = ENV_LOCK.lock().unwrap();
         let config = Config::default();
         unsafe { env::set_var("LMC_DB_PATH", "/tmp/env-override.db") };
         let path = resolve_db_path(&config);
@@ -225,6 +230,7 @@ cluster_gap_minutes = 10
 
     #[test]
     fn test_resolve_db_path_config_override() {
+        let _guard = ENV_LOCK.lock().unwrap();
         unsafe { env::remove_var("LMC_DB_PATH") };
         let mut config = Config::default();
         config.general.db_path = "/tmp/config-override.db".to_string();
@@ -234,6 +240,7 @@ cluster_gap_minutes = 10
 
     #[test]
     fn test_resolve_db_path_platform_default() {
+        let _guard = ENV_LOCK.lock().unwrap();
         unsafe { env::remove_var("LMC_DB_PATH") };
         let config = Config::default();
         let path = resolve_db_path(&config);

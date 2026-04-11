@@ -1,6 +1,8 @@
-use crate::db::{Cluster, Database};
+use crate::config::TagInferenceConfig;
+use crate::db::{Cluster, CommandRecord, Database};
+use crate::refine;
 use dialoguer::{Confirm, Input, Select};
-use rusqlite::Result;
+use anyhow::Result;
 
 pub struct SaveSummary {
     pub alias: String,
@@ -89,7 +91,7 @@ fn prompt_collision_menu(alias: &str, existing: &Cluster, db: &Database) -> Coll
     }
 }
 
-pub fn run(alias: &str, db: &Database) -> Result<()> {
+pub fn run(alias: &str, refine_flag: bool, db: &Database, config: &TagInferenceConfig) -> Result<()> {
     let new_cluster = match db.get_most_recent_open_cluster()? {
         Some(c) => c,
         None => {
@@ -99,14 +101,65 @@ pub fn run(alias: &str, db: &Database) -> Result<()> {
             return Ok(());
         }
     };
+    let cluster_id = new_cluster.id.expect("cluster from DB always has id");
 
-    let new_cluster_id = new_cluster.id.expect("cluster from DB always has id");
+    // Fetch non-noisy commands for this cluster
+    let all_commands = db.get_commands_for_cluster(cluster_id)?;
+    let commands: Vec<CommandRecord> = all_commands.into_iter().filter(|c| !c.noisy).collect();
+
+    if commands.is_empty() {
+        eprintln!("No meaningful commands in the most recent cluster.");
+        return Ok(());
+    }
+
+    // Refinement — auto-triggered or explicit
+    if refine::should_refine(&commands, refine_flag) {
+        match refine::run(alias, commands, config.clone())? {
+            refine::RefineResult::Confirmed(refined) => {
+                db.replace_cluster_commands(cluster_id, &refined)?;
+            }
+            refine::RefineResult::Split(top, bottom) => {
+                db.replace_cluster_commands(cluster_id, &top)?;
+
+                // Create a new cluster for the bottom half
+                let bottom_cluster_id = db.insert_cluster(&Cluster {
+                    id: None,
+                    alias: None,
+                    created_at: bottom.first().map(|c| c.timestamp).unwrap_or(0),
+                    last_used: None,
+                    directory: bottom.first().map(|c| c.directory.clone()),
+                    notes: None,
+                })?;
+                for (pos, cmd) in bottom.iter().enumerate() {
+                    let cmd_id = cmd.id.expect("command must have an id");
+                    db.add_command_to_cluster(bottom_cluster_id, cmd_id, pos as i32)?;
+                }
+
+                // Prompt user to optionally name the bottom half
+                let bottom_alias: String = Input::new()
+                    .with_prompt("Name for the second half (press Enter to skip)")
+                    .allow_empty(true)
+                    .interact_text()
+                    .unwrap_or_default();
+                if !bottom_alias.is_empty() {
+                    db.update_cluster_alias(bottom_cluster_id, &bottom_alias)?;
+                    println!("Saved \"{}\" — {} commands", bottom_alias, bottom.len());
+                }
+                // Top half falls through to alias assignment below
+            }
+            refine::RefineResult::Cancelled => {
+                println!("Save cancelled.");
+                return Ok(());
+            }
+        }
+    }
+
+    // Alias collision loop (unchanged logic)
     let mut current_alias = alias.to_string();
-
     loop {
         match db.get_cluster_by_alias(&current_alias)? {
             None => {
-                let summary = save_cluster(new_cluster_id, &current_alias, db)?;
+                let summary = save_cluster(cluster_id, &current_alias, db)?;
                 print_summary(&summary);
                 return Ok(());
             }
@@ -125,8 +178,11 @@ pub fn run(alias: &str, db: &Database) -> Result<()> {
                         }
                         let existing_id = existing.id.expect("cluster from DB always has id");
                         db.update_cluster_alias(existing_id, &new_name)?;
-                        let summary = save_cluster(new_cluster_id, &current_alias, db)?;
-                        println!("Existing cluster renamed: \"{}\" → \"{}\"", current_alias, new_name);
+                        let summary = save_cluster(cluster_id, &current_alias, db)?;
+                        println!(
+                            "Existing cluster renamed: \"{}\" → \"{}\"",
+                            current_alias, new_name
+                        );
                         print_summary(&summary);
                         return Ok(());
                     }
@@ -142,11 +198,10 @@ pub fn run(alias: &str, db: &Database) -> Result<()> {
                             .unwrap_or(false);
                         if confirmed {
                             db.delete_cluster(existing_id)?;
-                            let summary = save_cluster(new_cluster_id, &current_alias, db)?;
+                            let summary = save_cluster(cluster_id, &current_alias, db)?;
                             print_summary(&summary);
                             return Ok(());
                         }
-                        // Declined delete — loop back to show menu again
                     }
                     CollisionResolution::Cancel => {
                         return Ok(());
@@ -160,6 +215,7 @@ pub fn run(alias: &str, db: &Database) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::TagInferenceConfig;
     use crate::db::CommandRecord;
 
     fn setup_open_cluster(db: &Database) -> i64 {
@@ -291,7 +347,7 @@ mod tests {
         db.add_command_to_cluster(saved_id, cmd_id, 0).unwrap();
 
         // No open (unaliased) clusters — run should return Ok immediately
-        let result = run("new-alias", &db);
+        let result = run("new-alias", false, &db, &TagInferenceConfig::default());
         assert!(result.is_ok());
         // Alias was NOT saved (no open cluster to save)
         assert!(db.get_cluster_by_alias("new-alias").unwrap().is_none());

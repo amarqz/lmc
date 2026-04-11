@@ -4,6 +4,7 @@ mod config;
 mod db;
 mod filter;
 mod index;
+mod refine;
 mod retrieval;
 mod save;
 mod search;
@@ -27,7 +28,7 @@ fn main() {
     let cli = Cli::parse();
 
     match cli.command {
-        Some(Command::Save { alias, from }) => {
+        Some(Command::Save { alias, from, refine }) => {
             if from.is_some() {
                 eprintln!("Warning: --from is not yet implemented; saving the most recent cluster.");
             }
@@ -38,7 +39,7 @@ fn main() {
                     std::process::exit(1);
                 }
             };
-            if let Err(e) = save::run(&alias, &db) {
+            if let Err(e) = save::run(&alias, refine, &db, &cfg.tag_inference) {
                 eprintln!("Error saving cluster: {e}");
                 std::process::exit(1);
             }
